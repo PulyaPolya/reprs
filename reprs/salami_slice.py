@@ -1,0 +1,35 @@
+import pandas as pd
+from reprs.df_utils import sort_df
+
+
+def salami_slice(df: pd.DataFrame) -> pd.DataFrame:
+    # TODO implement a "minimum tolerance" so that onsets/releases don't
+    #   have to be *exactly* simultaneous
+    # any zero-length notes will be omitted.
+    # Given that all onsets/releases will be homophonic after running
+    #   this function, there would be a more efficient way of storing notes
+    #   than storing each one individually, but then we would have to rewrite
+    #   repr functions for the output.
+    if len(df) == 0:
+        return df.copy()
+    moments = sorted(set(df.onset) | set(df.release))
+    moment_iter = enumerate(moments)
+    moment_i, moment = next(moment_iter)
+    out = []
+    for _, note in df.iterrows():
+        while note.onset > moment:
+            moment_i, moment = next(moment_iter)
+        onset = note.onset
+        release_i = moment_i + 1
+        while release_i < len(moments) and moments[release_i] <= note.release:
+            new_note = note.copy()
+            new_note.onset = onset
+            new_note.release = onset = moments[release_i]
+            out.append(new_note)
+            release_i += 1
+    new_df = pd.DataFrame(out)
+    # Assuming that the input df is sorted as with sort_df(), this is the only
+    #   sorting we should need to do. But maybe we should double-check this
+    #   assumption. TODO
+    sort_df(new_df, inplace=True)
+    return new_df
