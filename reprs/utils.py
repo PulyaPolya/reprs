@@ -64,6 +64,8 @@ def get_item_less_than_or_eq(sorted_array, val, min_val=None):
     Traceback (most recent call last):
     ValueError: min_val=8 is greater than last item of `sorted_array` 6
     """
+    if min_val is not None:
+        val = max(min_val, val)
     if val < sorted_array[0]:
         # TODO handle min case
         raise ValueError(

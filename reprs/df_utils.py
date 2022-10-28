@@ -81,20 +81,20 @@ def get_eligible_releases(
 
 def get_df_segment_indices(eligible_onsets, eligible_releases, target_len):
     """
-    >>> eligible_onsets = list(range(32))
-    >>> eligible_releases = list(range(32))
-    >>> list(get_df_segment_indices(eligible_onsets, eligible_releases, 8))
-    [(0, 8), (8, 16), (16, 24), (24, 32)]
+    # >>> eligible_onsets = list(range(32))
+    # >>> eligible_releases = list(range(32))
+    # >>> list(get_df_segment_indices(eligible_onsets, eligible_releases, 8))
+    # [(0, 8), (8, 16), (16, 24), (24, 32)]
 
-    >>> eligible_onsets = [i * 2 for i in range(16)]
-    >>> eligible_releases = [i * 2 + 1 for i in range(16)]
-    >>> list(get_df_segment_indices(eligible_onsets, eligible_releases, 8))
-    [(0, 8), (8, 16), (16, 24), (24, 32)]
+    # >>> eligible_onsets = [i * 2 for i in range(16)]
+    # >>> eligible_releases = [i * 2 + 1 for i in range(16)]
+    # >>> list(get_df_segment_indices(eligible_onsets, eligible_releases, 8))
+    # [(0, 8), (8, 16), (16, 24), (24, 32)]
 
-    >>> eligible_onsets = [0, 3, 7, 14]
-    >>> eligible_releases = [2, 3, 6, 12, 13, 17]
-    >>> list(get_df_segment_indices(eligible_onsets, eligible_releases, 8))
-    [(0, 7), (7, 14), (14, 18)]
+    # >>> eligible_onsets = [0, 3, 7, 14]
+    # >>> eligible_releases = [2, 3, 6, 12, 13, 17]
+    # >>> list(get_df_segment_indices(eligible_onsets, eligible_releases, 8))
+    # [(0, 7), (7, 14), (14, 18)]
 
     We aim for target_len, but there is no firm limit on how long a segment
     might be. We depend on eligible_onsets/eligible_releases to be fairly
@@ -120,7 +120,7 @@ def get_df_segment_indices(eligible_onsets, eligible_releases, target_len):
     """
     # assumes df has a range index
     start_i = None
-    end_i = eligible_releases[0]
+    end_i = eligible_releases[0] - 1
     max_release_i = eligible_releases[-1]
     while end_i < max_release_i:
         if start_i is None:

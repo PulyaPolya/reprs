@@ -320,23 +320,10 @@ class MIDILikeRepr:
             assert min_window_len <= window_len
         return min_window_len
 
-    @staticmethod
-    def _get_bounds(window_len, window_len_jitter, min_window_len):
-        if window_len_jitter is None:
-            return window_len, window_len, window_len
-        else:
-            window_len_l_bound = max(
-                window_len - window_len_jitter, min_window_len
-            )
-            window_len_u_bound = window_len + window_len_jitter + 1
-            return window_len, window_len_l_bound, window_len_u_bound
-
     def segment(
         self,
         window_len: int,
         hop: int,
-        window_len_jitter: t.Optional[int] = None,
-        hop_jitter: t.Optional[int] = None,
         min_window_len: t.Optional[int] = None,
         allow_short_initial_window: bool = True,
         allow_short_last_window: bool = True,
@@ -360,16 +347,6 @@ class MIDILikeRepr:
                 SegmentIndices: returned if return_repr_indices is True
         """
         min_window_len = self._get_min_window_len(min_window_len, window_len)
-        (
-            this_window_len,
-            window_len_l_bound,
-            window_len_u_bound,
-        ) = self._get_bounds(window_len, window_len_jitter, min_window_len)
-        if hop_jitter is None:
-            this_hop = hop
-        else:
-            hop_l_bound = max(1, hop - hop_jitter)
-            hop_u_bound = hop + hop_jitter + 1
         start_note_on_i = self.start_note_on_i
         start_i = 0
         # if we never enter the while loop below, we need to define end_i
@@ -391,12 +368,12 @@ class MIDILikeRepr:
             yield out
             return
         while start_i < len(self.events) - min_window_len:
-            if window_len_jitter is not None:
-                this_window_len = random.randint(
-                    window_len_l_bound, window_len_u_bound
-                )
-            if hop_jitter is not None:
-                this_hop = random.randint(hop_l_bound, hop_u_bound)
+            # if window_len_jitter is not None:
+            #     this_window_len = random.randint(
+            #         window_len_l_bound, window_len_u_bound
+            #     )
+            # if hop_jitter is not None:
+            #     this_hop = random.randint(hop_l_bound, hop_u_bound)
             start_orphan_indices = self.sounding_notes_at_time[
                 self.note_on_idx_to_time[start_note_on_i]
             ]
@@ -411,7 +388,7 @@ class MIDILikeRepr:
                 if start_orphan_indices
                 else []
             )
-            exact_end_i = start_i + this_window_len - len(start_orphans)
+            exact_end_i = start_i + window_len - len(start_orphans)
             end_i_decremented = False
             while exact_end_i > start_i:
                 repr_i = self.repr_note_off_indices[
@@ -442,7 +419,7 @@ class MIDILikeRepr:
                 )
                 if (
                     end_i == len(self.events) - 1
-                    and (end_i - start_i < this_window_len)
+                    and (end_i - start_i < window_len)
                     and not end_i_decremented
                 ):
                     end_i += 1
@@ -454,7 +431,7 @@ class MIDILikeRepr:
                     + (len(end_orphan_indices) + 1 if end_orphan_indices else 0)
                     + len(start_orphans)
                     - start_i
-                    < window_len_u_bound
+                    < window_len
                 ):
                     break
                 exact_end_i -= 1
@@ -529,7 +506,7 @@ class MIDILikeRepr:
                 #   here.
                 return
 
-            next_start_i_target = start_i + this_hop
+            next_start_i_target = start_i + hop
             next_start_i_target_note_on = (
                 np.searchsorted(
                     self.repr_note_on_indices, next_start_i_target, side="right"
