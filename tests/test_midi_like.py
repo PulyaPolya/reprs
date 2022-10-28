@@ -103,7 +103,24 @@ def test_midi_like(n_kern_files):
                 assert abs(src_note.release - dst_note.release) <= allowed_error
             except AssertionError:
                 has_unison(decoded, j)
-        for_token_class = False
+
+
+def test_segment(n_kern_files):
+    paths = get_input_kern_paths(seed=42)
+    settings = ReprSettings()
+    for i, path in enumerate(paths):
+        # path = "/Users/malcolm/datasets/humdrum-data/corelli/op3/op3n12-02.krn"
+        # path = "/Users/malcolm/datasets/humdrum-data/jrp/Jos/kern/Jos1808-Qui_habitat_in_adjutorio_altissimi.krn"
+        print(f"{i + 1}/{len(paths)}: {path}")
+        df = read_humdrum(path)
+        encoded = midilike_encode(
+            df,
+            settings,
+            feature_names="spelling",
+            for_token_classification=True,
+            sort=False,
+        )
+        for_token_class = True
         boundary_tokens = True
         for window_len, hop in it.product(
             (64, 128),

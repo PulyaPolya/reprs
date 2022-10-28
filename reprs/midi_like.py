@@ -20,6 +20,7 @@ from reprs.constants import (
     PAD_TOKEN,
     START_TOKEN,
 )
+from reprs.utils import get_idx_to_item_leq, get_index_to_item_leq, get_item_leq
 from reprs.df_utils import (
     get_eligible_onsets,
     get_eligible_releases,
@@ -111,20 +112,20 @@ NULL_FEATURE = "na"
 #         d.extend(scrap)
 
 
-@dataclass
+@dataclass(eq=True)
 class SegmentIndices:
-    start_orphan_indices: t.Tuple[int]
+    start_orphan_indxs: t.Tuple[int]
     start_i: int
     end_i: int
-    end_orphan_indices: t.Tuple[int]
+    end_orphan_indxs: t.Tuple[int]
 
     def __post_init__(self):
         self._len = 0
-        if self.start_orphan_indices:
-            self._len += len(self.start_orphan_indices) + 1
+        if self.start_orphan_indxs:
+            self._len += len(self.start_orphan_indxs) + 1
         self._len += self.end_i - self.start_i
-        if self.end_orphan_indices:
-            self._len += len(self.end_orphan_indices) + 1
+        if self.end_orphan_indxs:
+            self._len += len(self.end_orphan_indxs) + 1
 
     def __len__(self):
         return self._len
@@ -141,21 +142,21 @@ class SegmentIndices:
         if key < 0:
             raise IndexError(f"{key} is negative")
         orig_key = key
-        if self.start_orphan_indices:
-            if key < len(self.start_orphan_indices):
-                return self.start_orphan_indices[key]
-            elif key == len(self.start_orphan_indices):
+        if self.start_orphan_indxs:
+            if key < len(self.start_orphan_indxs):
+                return self.start_orphan_indxs[key]
+            elif key == len(self.start_orphan_indxs):
                 return None
-            key -= len(self.start_orphan_indices) + 1
+            key -= len(self.start_orphan_indxs) + 1
         if key < (self.end_i - self.start_i):
             return self.start_i + key
         key -= self.end_i - self.start_i
-        if self.end_orphan_indices:
+        if self.end_orphan_indxs:
             if not key:
                 return None
             key -= 1
-            if key < len(self.end_orphan_indices):
-                return self.end_orphan_indices[key]
+            if key < len(self.end_orphan_indxs):
+                return self.end_orphan_indxs[key]
         raise IndexError(f"{orig_key} is out of range")
 
 
@@ -302,14 +303,14 @@ class MIDILikeRepr:
         name,
         repr_start_i,
         repr_end_i,
-        start_orphan_indices=(),
-        end_orphan_indices=(),
+        start_orphan_indxs=(),
+        end_orphan_indxs=(),
     ):
         indices = {
             i for i in self.df_indices[repr_start_i:repr_end_i] if i is not None
         }
-        indices = indices.union(start_orphan_indices)
-        indices = indices.union(end_orphan_indices)
+        indices = indices.union(start_orphan_indxs)
+        indices = indices.union(end_orphan_indxs)
         return self.df.loc[sorted(indices), name]
 
     @staticmethod
@@ -319,6 +320,147 @@ class MIDILikeRepr:
         else:
             assert min_window_len <= window_len
         return min_window_len
+
+    def _get_start_orphans(
+        self, start_note_on_i
+    ) -> t.Tuple[t.List[int], t.List[str]]:
+        start_orphan_indxs = self.sounding_notes_at_time[
+            self.note_on_idx_to_time[start_note_on_i]
+        ]
+        start_orphans = (
+            (
+                [
+                    f"note_on<{int(self.df.loc[i, 'pitch'])}>"
+                    for i in start_orphan_indxs
+                ]
+                + [self.ts.unknown_time_shift]
+            )
+            if start_orphan_indxs
+            else []
+        )
+        return start_orphan_indxs, start_orphans
+
+    def _get_end_orphan_indxs(self, end_note_off_i) -> t.List[int]:
+        # _get_end_orphans is separated into two functions because we
+        #   don't want to generate end_orphans within the while loop below,
+        #   but only after breaking out of it
+        return self.sounding_notes_at_time[
+            self.note_off_idx_to_time[end_note_off_i]
+        ]
+
+    def _get_end_orphans(self, end_orphan_indxs) -> t.List[str]:
+        return (
+            (
+                [self.ts.unknown_time_shift]
+                + [
+                    f"note_off<{int(self.df.loc[i, 'pitch'])}>"
+                    for i in end_orphan_indxs
+                ]
+            )
+            if end_orphan_indxs
+            else []
+        )
+
+    def _get_features(
+        self, start_orphan_indxs, start_i, end_i, end_orphan_indxs
+    ) -> t.Dict[str, t.List[str]]:
+        if self.for_token_classification:
+            start_orphan_repr_indices = [
+                self.note_on_idx_to_repr_idx[i] for i in start_orphan_indxs
+            ]
+            features = {}
+            for name in self.features:
+                feature = [
+                    self.features[name][i] for i in start_orphan_repr_indices
+                ]
+                if start_orphan_repr_indices:
+                    feature.append(NULL_FEATURE)
+                feature.extend(self.features[name][start_i:end_i])
+                if end_orphan_indxs:
+                    feature.extend(
+                        [NULL_FEATURE for _ in range(len(end_orphan_indxs) + 1)]
+                    )
+                features[name] = feature
+        else:
+            features = {
+                name: self._get_feature_segment(
+                    name,
+                    start_i,
+                    end_i,
+                    start_orphan_indxs,
+                    end_orphan_indxs,
+                )
+                for name in self.features
+            }
+        return features
+
+    def _get_segment_indxs(
+        self, start_orphan_indxs, start_i, end_i, end_orphan_indxs
+    ):
+        return SegmentIndices(
+            tuple(self.note_on_idx_to_repr_idx[i] for i in start_orphan_indxs),
+            start_i,
+            end_i,
+            tuple(self.note_off_idx_to_repr_idx[i] for i in end_orphan_indxs),
+        )
+
+    def _advance_start_i(
+        self, start_i, hop, eligible_onsets
+    ) -> t.Tuple[int, int]:
+        next_start_i_target = start_i + hop
+        next_start_i_target_note_on = get_idx_to_item_leq(
+            self.repr_note_on_indices, next_start_i_target
+        )
+        eligible_onsets_i = get_idx_to_item_leq(
+            eligible_onsets, next_start_i_target_note_on
+        )
+        prev_start_i = start_i
+        # if hop is short it's possible that the previous steps will have
+        #   backed up to the start_i we were already at, in which case
+        #   we get stuck in an infinite loop. So in that case, we forcibly
+        #   advance to the next eligible_onset
+        while start_i == prev_start_i:
+            start_note_on_i = eligible_onsets[eligible_onsets_i]
+            start_i = self.note_on_idx_to_repr_idx[start_note_on_i]
+            eligible_onsets_i += 1
+        return start_note_on_i, start_i, eligible_onsets_i
+
+    def _advance_end_i(
+        self, start_i, window_len, n_start_orphans, eligible_releases
+    ):
+        exact_end_i = start_i + window_len - n_start_orphans
+        end_i_decremented = False
+        while exact_end_i > start_i:
+            # We subtract 1 from exact_end_i because we are looking for
+            #   the last event to *include*
+            repr_i = get_item_leq(self.repr_note_off_indices, exact_end_i - 1)
+            possible_note_off_j = self.repr_idx_to_note_off_idx[repr_i]
+            possible_off_time = self.note_off_idx_to_time[possible_note_off_j]
+            end_note_off_i = get_index_to_item_leq(
+                eligible_releases, possible_off_time
+            )
+            end_note_off_time = self.note_off_idx_to_time[end_note_off_i]
+            end_i = (
+                self.repr_idx_of_last_note_off_at_time[end_note_off_time] + 1
+            )
+            if (
+                end_i == len(self.events) - 1
+                and (end_i - start_i < window_len)
+                and not end_i_decremented
+            ):
+                end_i += 1
+            end_orphan_indxs = self._get_end_orphan_indxs(end_note_off_i)
+            if (
+                end_i
+                + (len(end_orphan_indxs) + 1 if end_orphan_indxs else 0)
+                + n_start_orphans
+                - start_i
+                < window_len
+            ):
+                break
+            exact_end_i -= 1
+            end_i_decremented = True
+        return end_i, end_orphan_indxs
 
     def segment(
         self,
@@ -356,7 +498,7 @@ class MIDILikeRepr:
         eligible_onsets = self.eligible_onsets
         eligible_releases = self.eligible_releases
         eligible_onsets_i = 0
-        max_eligible_onset = len(eligible_onsets) - 1
+        max_eligible_onset_i = len(eligible_onsets) - 1
         if allow_short_initial_window and len(self.events) < min_window_len:
             out = (
                 self.events[:],
@@ -368,131 +510,26 @@ class MIDILikeRepr:
             yield out
             return
         while start_i < len(self.events) - min_window_len:
-            # if window_len_jitter is not None:
-            #     this_window_len = random.randint(
-            #         window_len_l_bound, window_len_u_bound
-            #     )
-            # if hop_jitter is not None:
-            #     this_hop = random.randint(hop_l_bound, hop_u_bound)
-            start_orphan_indices = self.sounding_notes_at_time[
-                self.note_on_idx_to_time[start_note_on_i]
-            ]
-            start_orphans = (
-                (
-                    [
-                        f"note_on<{int(self.df.loc[i, 'pitch'])}>"
-                        for i in start_orphan_indices
-                    ]
-                    + [self.ts.unknown_time_shift]
-                )
-                if start_orphan_indices
-                else []
+            start_orphan_indxs, start_orphans = self._get_start_orphans(
+                start_note_on_i
             )
-            exact_end_i = start_i + window_len - len(start_orphans)
-            end_i_decremented = False
-            while exact_end_i > start_i:
-                repr_i = self.repr_note_off_indices[
-                    np.searchsorted(
-                        # We subtract 1 from exact_end_i because we are looking for
-                        #   the last event to *include*
-                        self.repr_note_off_indices,
-                        exact_end_i - 1,
-                        side="right",
-                    )
-                    - 1
-                ]
-                possible_note_off_j = self.repr_idx_to_note_off_idx[repr_i]
-                possible_off_time = self.note_off_idx_to_time[
-                    possible_note_off_j
-                ]
-                eligible_release_i = (
-                    np.searchsorted(
-                        eligible_releases.values, possible_off_time, "right"
-                    )
-                    - 1
-                )
-                end_note_off_i = eligible_releases.index[eligible_release_i]
-                end_note_off_time = self.note_off_idx_to_time[end_note_off_i]
-                end_i = (
-                    self.repr_idx_of_last_note_off_at_time[end_note_off_time]
-                    + 1
-                )
-                if (
-                    end_i == len(self.events) - 1
-                    and (end_i - start_i < window_len)
-                    and not end_i_decremented
-                ):
-                    end_i += 1
-                end_orphan_indices = self.sounding_notes_at_time[
-                    self.note_off_idx_to_time[end_note_off_i]
-                ]
-                if (
-                    end_i
-                    + (len(end_orphan_indices) + 1 if end_orphan_indices else 0)
-                    + len(start_orphans)
-                    - start_i
-                    < window_len
-                ):
-                    break
-                exact_end_i -= 1
-                end_i_decremented = True
-            end_orphans = (
-                (
-                    [self.ts.unknown_time_shift]
-                    + [
-                        f"note_off<{int(self.df.loc[i, 'pitch'])}>"
-                        for i in end_orphan_indices
-                    ]
-                )
-                if end_orphan_indices
-                else []
+            end_i, end_orphan_indxs = self._advance_end_i(
+                start_i, window_len, len(start_orphans), eligible_releases
             )
-            # print(start_i, end_i)
+            end_orphans = self._get_end_orphans(end_orphan_indxs)
             segment = start_orphans + self.events[start_i:end_i] + end_orphans
-            if self.for_token_classification:
-                start_orphan_repr_indices = [
-                    self.note_on_idx_to_repr_idx[i]
-                    for i in start_orphan_indices
-                ]
-                features = {}
-                for name in self.features:
-                    feature = [
-                        self.features[name][i]
-                        for i in start_orphan_repr_indices
-                    ]
-                    if start_orphan_repr_indices:
-                        feature.append(NULL_FEATURE)
-                    feature.extend(self.features[name][start_i:end_i])
-                    feature.extend([NULL_FEATURE for _ in end_orphans])
-                    features[name] = feature
-            else:
-                features = {
-                    name: self._get_feature_segment(
-                        name,
-                        start_i,
-                        end_i,
-                        start_orphan_indices,
-                        end_orphan_indices,
-                    )
-                    for name in self.features
-                }
+            features = self._get_features(
+                start_orphan_indxs, start_i, end_i, end_orphan_indxs
+            )
             out = (segment, features, self.note_on_idx_to_time[start_note_on_i])
             if return_repr_indices:
-                segment_indices = SegmentIndices(
-                    tuple(
-                        self.note_on_idx_to_repr_idx[i]
-                        for i in start_orphan_indices
-                    ),
-                    start_i,
-                    end_i,
-                    tuple(
-                        self.note_off_idx_to_repr_idx[i]
-                        for i in end_orphan_indices
+                out += (
+                    self._get_segment_indxs(
+                        start_orphan_indxs, start_i, end_i, end_orphan_indxs
                     ),
                 )
-                out += (segment_indices,)
             yield out
-            if eligible_onsets_i == max_eligible_onset:
+            if eligible_onsets_i == max_eligible_onset_i:
                 # if there are very many parts, it is possible to get "stuck"
                 #   at the end when there are too many events remaining
                 #   to satisfy the `while start_i < len(self.events) - min_window_len`
@@ -505,86 +542,24 @@ class MIDILikeRepr:
                 #   "allow_short_last_window" condition below, we return directly
                 #   here.
                 return
-
-            next_start_i_target = start_i + hop
-            next_start_i_target_note_on = (
-                np.searchsorted(
-                    self.repr_note_on_indices, next_start_i_target, side="right"
-                )
-                - 1
+            start_note_on_i, start_i, eligible_onsets_i = self._advance_start_i(
+                start_i, hop, eligible_onsets
             )
-            eligible_onsets_i = (
-                np.searchsorted(
-                    eligible_onsets, next_start_i_target_note_on, side="right"
-                )
-                - 1
-            )
-            prev_start_i = start_i
-            # if hop is short it's possible that the previous steps will have
-            #   backed up to the start_i we were already at, in which case
-            #   we get stuck in an infinite loop. So in that case, we forcibly
-            #   advance to the next eligible_onset
-            while start_i == prev_start_i:
-                start_note_on_i = eligible_onsets[eligible_onsets_i]
-                start_i = self.note_on_idx_to_repr_idx[start_note_on_i]
-                eligible_onsets_i += 1
         if allow_short_last_window and end_i < len(self.events):
-            start_orphan_indices = self.sounding_notes_at_time[
-                self.note_on_idx_to_time[start_note_on_i]
-            ]
-            start_orphans = (
-                (
-                    [
-                        f"note_on<{int(self.df.loc[i, 'pitch'])}>"
-                        for i in start_orphan_indices
-                    ]
-                    + [self.ts.unknown_time_shift]
-                )
-                if start_orphan_indices
-                else []
+            start_orphan_indxs, start_orphans = self._get_start_orphans(
+                start_note_on_i
             )
-            if self.for_token_classification:
-                start_orphan_repr_indices = [
-                    self.note_on_idx_to_repr_idx[i]
-                    for i in start_orphan_indices
-                ]
-                features = {}
-                for name in self.features:
-                    feature = [
-                        self.features[name][i]
-                        for i in start_orphan_repr_indices
-                    ]
-                    if start_orphan_repr_indices:
-                        feature.append(NULL_FEATURE)
-                    feature.extend(self.features[name][start_i:])
-                    features[name] = feature
-            else:
-                features = {
-                    name: self._get_feature_segment(
-                        name,
-                        start_i,
-                        repr_end_i=None,
-                        start_orphan_indices=start_orphan_indices,
-                    )
-                    for name in self.features
-                }
+            features = self._get_features(start_orphan_indxs, start_i, None, [])
             out = (
                 start_orphans + self.events[start_i:],
                 features,
                 self.note_on_idx_to_time[start_note_on_i],
             )
             if return_repr_indices:
-                out += (
-                    SegmentIndices(
-                        tuple(
-                            self.note_on_idx_to_repr_idx[i]
-                            for i in start_orphan_indices
-                        ),
-                        start_i,
-                        len(self.events),
-                        (),
-                    ),
+                segment_indices = self._get_segment_indxs(
+                    start_orphan_indxs, start_i, len(self.events), []
                 )
+                out += (segment_indices,)
             yield out
 
 

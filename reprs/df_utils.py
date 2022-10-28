@@ -2,7 +2,7 @@ import typing as t
 import numpy as np
 import pandas as pd
 
-from reprs.utils import get_item_less_than_or_eq
+from reprs.utils import get_item_leq
 
 
 def get_eligible_onsets(
@@ -127,7 +127,7 @@ def get_df_segment_indices(eligible_onsets, eligible_releases, target_len):
             start_i = eligible_onsets[0]
         else:
             try:
-                start_i = get_item_less_than_or_eq(
+                start_i = get_item_leq(
                     eligible_onsets, end_i + 1, min_val=start_i + 1
                 )
             except ValueError:  # pylint: disable=try-except-raise
@@ -135,7 +135,7 @@ def get_df_segment_indices(eligible_onsets, eligible_releases, target_len):
                 raise
         # we calculate end_i *inclusively*, then add 1 to it to return
         #   an exclusive boundary appropriate for slicing in Python
-        end_i = get_item_less_than_or_eq(
+        end_i = get_item_leq(
             eligible_releases,
             # We need to subtract 1 from target_len because we are
             #   calculating an inclusive boundary
