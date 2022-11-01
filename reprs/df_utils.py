@@ -1,69 +1,108 @@
+from types import MappingProxyType
 import typing as t
 import numpy as np
 import pandas as pd
 
 from reprs.utils import get_item_leq
 
+DF_TYPE_SORT_ORDER = MappingProxyType(
+    {"bar": 0, "time_signature": 1, "note": 2}
+)
+
 
 def get_eligible_onsets(
-    df: pd.DataFrame, keep_onsets_together: bool = True
+    df: pd.DataFrame,
+    keep_onsets_together: bool = True,
+    notes_only: bool = False,
 ) -> t.Union[pd.Index, np.array]:
     """
+    This function should perhaps be renamed "get indices to eligible onsets".
     >>> df = pd.DataFrame({
-    ...     "pitch": [60, 64, 60, 64, 60, 64, 60, 64],
-    ...     "onset": [0, 0, 1, 1, 1.5, 2.0, 3.0, 3.0],
-    ...     "release": [1, 1, 1.5, 2.0, 3.0, 3.0, 4.0, 4.5],
+    ...     "pitch": [0, 60, 64, 60, 64, 0, 60, 64, 60, 64, 0],
+    ...     "onset": [0, 0, 0, 1, 1, 1.5, 1.5, 2.0, 3.0, 3.0, 5.0],
+    ...     "release": [0, 1, 1, 1.5, 2.0, 0, 3.0, 3.0, 4.0, 4.5, 0],
+    ...     "type": ["bar"] + ["note"] * 4 + ["bar"] + ["note"] * 4 + ["bar"],
     ... })
     >>> df
-       pitch  onset  release
-    0     60    0.0      1.0
-    1     64    0.0      1.0
-    2     60    1.0      1.5
-    3     64    1.0      2.0
-    4     60    1.5      3.0
-    5     64    2.0      3.0
-    6     60    3.0      4.0
-    7     64    3.0      4.5
+        pitch  onset  release  type
+    0       0    0.0      0.0   bar
+    1      60    0.0      1.0  note
+    2      64    0.0      1.0  note
+    3      60    1.0      1.5  note
+    4      64    1.0      2.0  note
+    5       0    1.5      0.0   bar
+    6      60    1.5      3.0  note
+    7      64    2.0      3.0  note
+    8      60    3.0      4.0  note
+    9      64    3.0      4.5  note
+    10      0    5.0      0.0   bar
     >>> get_eligible_onsets(df)
-    array([0, 2, 4, 5, 6])
+    array([ 0,  3,  5,  7,  8, 10])
+    >>> get_eligible_onsets(df, notes_only=True)
+    array([1, 3, 6, 7, 8])
+    >>> get_eligible_onsets(df, keep_onsets_together=False)
+    RangeIndex(start=0, stop=11, step=1)
+    >>> get_eligible_onsets(df, keep_onsets_together=False, notes_only=True)
+    Int64Index([1, 2, 3, 4, 6, 7, 8, 9], dtype='int64')
     """
+    if notes_only:
+        df = df[df.type == "note"]
     if not keep_onsets_together:
         return df.index
     onset_indices = np.unique(df.onset, return_index=True)[1]
-    return onset_indices
+    return df.index[onset_indices].values
 
 
 def get_eligible_releases(
-    df: pd.DataFrame, keep_releases_together: bool = True
+    df: pd.DataFrame,
+    keep_releases_together: bool = True,
 ) -> pd.Series:
     """
-
     Returns a series where the Index gives the indices into the dataframe
     and the values are the associated release times.
     >>> df = pd.DataFrame({
-    ...     "pitch": [60, 64, 60, 64, 60, 64, 60, 64],
-    ...     "onset": [0, 0, 1, 1, 1.5, 2.0, 3.0, 3.0],
-    ...     "release": [1, 1, 1.5, 2.0, 3.0, 3.0, 4.0, 4.5],
+    ...     "pitch": [0, 60, 64, 60, 64, 0, 60, 64, 60, 64, 0],
+    ...     "onset": [0, 0, 0, 1, 1, 1.5, 1.5, 2.0, 3.0, 3.0, 5.0],
+    ...     "release": [0, 1, 1, 1.5, 2.0, 0, 3.0, 3.0, 4.0, 4.5, 0],
+    ...     "type": ["bar"] + ["note"] * 4 + ["bar"] + ["note"] * 4 + ["bar"],
     ... })
     >>> df
-       pitch  onset  release
-    0     60    0.0      1.0
-    1     64    0.0      1.0
-    2     60    1.0      1.5
-    3     64    1.0      2.0
-    4     60    1.5      3.0
-    5     64    2.0      3.0
-    6     60    3.0      4.0
-    7     64    3.0      4.5
+        pitch  onset  release  type
+    0       0    0.0      0.0   bar
+    1      60    0.0      1.0  note
+    2      64    0.0      1.0  note
+    3      60    1.0      1.5  note
+    4      64    1.0      2.0  note
+    5       0    1.5      0.0   bar
+    6      60    1.5      3.0  note
+    7      64    2.0      3.0  note
+    8      60    3.0      4.0  note
+    9      64    3.0      4.5  note
+    10      0    5.0      0.0   bar
+
+    Only notes have releases so get_eligible_releases() is always `note_only`.
+    (Cf get_eligible_onsets().)
+
     >>> get_eligible_releases(df)
+    2    1.0
+    3    1.5
+    4    2.0
+    7    3.0
+    8    4.0
+    9    4.5
+    Name: release, dtype: float64
+    >>> get_eligible_releases(df, keep_releases_together=False)
     1    1.0
-    2    1.5
-    3    2.0
-    5    3.0
-    6    4.0
-    7    4.5
+    2    1.0
+    3    1.5
+    4    2.0
+    6    3.0
+    7    3.0
+    8    4.0
+    9    4.5
     Name: release, dtype: float64
     """
+    df = df[df.type == "note"]
     if not keep_releases_together:
         return df.release
     df2 = df.sort_values(
@@ -179,6 +218,15 @@ def sort_df(df, inplace=False):
         key=lambda x: 128 if x is None else x,
         kind="mergesort",  # default sort is not stable
     )
+    if "type" in df.columns:
+        df.sort_values(
+            by="type",
+            axis=0,
+            inplace=True,
+            ignore_index=True,
+            key=lambda x: x.map(DF_TYPE_SORT_ORDER),
+            kind="mergesort",  # default sort is not stable
+        )
     df.sort_values(
         by="onset",
         axis=0,

@@ -5,11 +5,13 @@ except ImportError:
     from cached_property import cached_property  # type:ignore
 
 from collections import defaultdict, deque
-from functools import partial  # pylint: disable=ungrouped-imports
+from functools import partial
+import math  # pylint: disable=ungrouped-imports
 from numbers import Number
 import re
 import typing as t
 from dataclasses import dataclass
+import warnings
 import pandas as pd
 from time_shifter import TimeShifter
 
@@ -27,25 +29,29 @@ from reprs.df_utils import (
 from reprs.shared import ReprSettings
 
 
-# @dataclass
-# class MidiLikeSettings(ReprSettings):
-#     include_barlines: bool = False
+@dataclass
+class MidiLikeSettings(ReprSettings):
+    include_barlines: bool = False
 
 
 @dataclass
 class Event:
     # helper class for midilike_encode
     type_: str
-    pitch: int
     when: float
     idx: int
+    pitch: int = 0
     features: t.Optional[dict] = None
     phantom: bool = False
 
     def to_token(self):
         if self.type_ == "note_on":
             return "n" + chr(self.pitch)
-        return "N" + chr(self.pitch)
+        elif self.type_ == "note_off":
+            return "N" + chr(self.pitch)
+        raise ValueError(
+            f"don't know how to create token from Event of type_ '{self.type_}'"
+        )
 
 
 NOTE_PATTERN = re.compile(
@@ -178,9 +184,11 @@ class MIDILikeRepr:
         feature_names: t.Union[None, str, t.Iterable[str]] = None,
         df=None,
         for_token_classification: bool = False,
+        include_barlines: bool = False,
     ):
         self.df = df
         self.ts = time_shifter
+        self._include_barlines = include_barlines
         self.events = []
         self.df_indices = []
         self.features = defaultdict(list)
@@ -201,7 +209,6 @@ class MIDILikeRepr:
         #   into the repr but instead into the df, so it should be 0 at the
         #   start regardless of whether we are writing out df. Or at least
         #   so I think, and tests seem to pass.
-        self.start_note_on_i = 0  # if not start_token else 1
         self.for_token_classification = for_token_classification
         self.max_error = 0
         if start_token:
@@ -228,7 +235,23 @@ class MIDILikeRepr:
                             self.features[name].extend(
                                 [NULL_FEATURE for _ in time_shifts]
                             )
-
+            if note_event.type_ == "bar":
+                if include_barlines:
+                    self.note_on_idx_to_repr_idx[note_event.idx] = len(self)
+                    for name in feature_names:
+                        # TODO rename?
+                        self.note_off_i_to_feature_i[name][
+                            note_event.idx
+                        ] = len(self.features[name])
+                        if for_token_classification:
+                            self.features[name].append(NULL_FEATURE)
+                    self.events.append("bar")
+                    self.df_indices.append(note_event.idx)
+                    if now not in self.sounding_notes_at_time:
+                        # if "now" has no note_off events, we need to update
+                        #   sounding pitches now
+                        self.sounding_notes_at_time[now] = sounding_notes.copy()
+                continue
             if note_event.type_ == "note_off":
                 self.note_off_idx_to_repr_idx[note_event.idx] = len(self)
                 # self.note_off_idx_to_time[note_event.idx] = now
@@ -299,7 +322,11 @@ class MIDILikeRepr:
 
     @cached_property
     def eligible_onsets(self):
-        return get_eligible_onsets(self.df, keep_onsets_together=True)
+        return get_eligible_onsets(
+            self.df,
+            keep_onsets_together=True,
+            notes_only=not self._include_barlines,
+        )
 
     @cached_property
     def eligible_releases(self):
@@ -332,7 +359,7 @@ class MIDILikeRepr:
         self, start_note_on_i
     ) -> t.Tuple[t.List[int], t.List[str]]:
         start_orphan_indxs = self.sounding_notes_at_time[
-            self.df.onset.iloc[start_note_on_i]
+            self.df.onset.loc[start_note_on_i]
         ]
         start_orphans = (
             (
@@ -351,7 +378,7 @@ class MIDILikeRepr:
         # _get_end_orphans is separated into two functions because we
         #   don't want to generate end_orphans within the while loop below,
         #   but only after breaking out of it
-        return self.sounding_notes_at_time[self.df.release.iloc[end_note_off_i]]
+        return self.sounding_notes_at_time[self.df.release.loc[end_note_off_i]]
 
     def _get_end_orphans(self, end_orphan_indxs) -> t.List[str]:
         return (
@@ -417,14 +444,16 @@ class MIDILikeRepr:
             self.repr_note_on_indices, next_start_i_target
         )
         eligible_onsets_i = get_idx_to_item_leq(
-            eligible_onsets, next_start_i_target_note_on
+            eligible_onsets,
+            next_start_i_target_note_on,
+            return_first_if_larger=True,
         )
         prev_start_i = start_i
         # if hop is short it's possible that the previous steps will have
         #   backed up to the start_i we were already at, in which case
         #   we get stuck in an infinite loop. So in that case, we forcibly
         #   advance to the next eligible_onset
-        while start_i == prev_start_i:
+        while start_i <= prev_start_i:
             start_note_on_i = eligible_onsets[eligible_onsets_i]
             start_i = self.note_on_idx_to_repr_idx[start_note_on_i]
             eligible_onsets_i += 1
@@ -440,11 +469,11 @@ class MIDILikeRepr:
             #   the last event to *include*
             repr_i = get_item_leq(self.repr_note_off_indices, exact_end_i - 1)
             possible_note_off_j = self.repr_idx_to_note_off_idx[repr_i]
-            possible_off_time = self.df.release.iloc[possible_note_off_j]
+            possible_off_time = self.df.release.loc[possible_note_off_j]
             end_note_off_i = get_index_to_item_leq(
                 eligible_releases, possible_off_time
             )
-            end_note_off_time = self.df.release.iloc[end_note_off_i]
+            end_note_off_time = self.df.release.loc[end_note_off_i]
             end_i = (
                 self.repr_idx_of_last_note_off_at_time[end_note_off_time] + 1
             )
@@ -494,13 +523,14 @@ class MIDILikeRepr:
                 SegmentIndices: returned if return_repr_indices is True
         """
         min_window_len = self._get_min_window_len(min_window_len, window_len)
-        start_note_on_i = self.start_note_on_i
+
         start_i = 0
         # if we never enter the while loop below, we need to define end_i
         #   so that the allow_short_last_window condition below will execute
         #   correctly.
         end_i = 0
         eligible_onsets = self.eligible_onsets
+        start_note_on_i = eligible_onsets[0]
         eligible_releases = self.eligible_releases
         eligible_onsets_i = 0
         max_eligible_onset_i = len(eligible_onsets) - 1
@@ -508,7 +538,7 @@ class MIDILikeRepr:
             out = (
                 self.events[:],
                 {name: self.features[name][:] for name in self.features},
-                self.df.onset.iloc[0],
+                self.df.onset.loc[0],
             )
             if return_repr_indices:
                 out += (SegmentIndices((), 0, len(self.events), ()),)
@@ -526,7 +556,7 @@ class MIDILikeRepr:
             features = self._get_features(
                 start_orphan_indxs, start_i, end_i, end_orphan_indxs
             )
-            out = (segment, features, self.df.onset.iloc[start_note_on_i])
+            out = (segment, features, self.df.onset.loc[start_note_on_i])
             if return_repr_indices:
                 out += (
                     self._get_segment_indxs(
@@ -558,7 +588,7 @@ class MIDILikeRepr:
             out = (
                 start_orphans + self.events[start_i:],
                 features,
-                self.df.onset.iloc[start_note_on_i],
+                self.df.onset.loc[start_note_on_i],
             )
             if return_repr_indices:
                 segment_indices = self._get_segment_indxs(
@@ -570,7 +600,7 @@ class MIDILikeRepr:
 
 def midilike_encode(
     df: pd.DataFrame,
-    settings: ReprSettings,
+    settings: MidiLikeSettings,
     end_token: bool = False,
     start_token: bool = False,
     feature_names: t.Union[None, str, t.Iterable[str]] = None,
@@ -583,6 +613,15 @@ def midilike_encode(
     """
     if sort:
         df = sort_df(df, inplace=False)
+    if settings.include_barlines:
+        # if "type" not in df.columns:
+        #     warnings.warn(
+        #         "`include_barlines` is True but df has no 'type' column"
+        #     )
+        if "bar" not in df.type.values:
+            warnings.warn(
+                "`include_barlines` is True but there are no 'bar' events in `df`"
+            )
     # Unlike the previous version of this function, this function doesn't
     #   handle splitting the dataframe.
     if isinstance(feature_names, str):
@@ -595,21 +634,27 @@ def midilike_encode(
     #   the events are so nearly in sorted order already that the overhead of
     #   finding the insertion position for every event isn't worth it.
     note_events = []
-    for idx, note in df.iterrows():
-        if note.onset == note.release:
+    for idx, row in df.iterrows():
+        if row.type == "bar" and settings.include_barlines:
+            note_events.append(Event("bar", row.onset, idx))
+        # elif row.type == "time_signature":
+        #     TODO
+        if row.type != "note":
+            continue
+        if row.onset == row.release:
             raise ValueError(
                 "remove zero-length notes from df before calling midilike_encode()"
             )
         note_events.append(
             Event(
                 "note_on",
-                note.pitch,
-                note.onset,
+                row.onset,
                 idx,
                 # some features, like "enharmonic_spelling", may be null
                 # for some examples
+                pitch=row.pitch,
                 features={
-                    name: note[name] for name in feature_names if name in note
+                    name: row[name] for name in feature_names if name in row
                 },
                 # phantom=note.phantom if phantom_features else False,
             )
@@ -617,15 +662,16 @@ def midilike_encode(
         note_events.append(
             Event(
                 "note_off",
-                note.pitch,
-                note.release,
+                row.release,
                 idx,
+                pitch=row.pitch,
                 # phantom=note.phantom if phantom_features else False,
             )
         )
     note_events.sort(key=lambda event: event.pitch)
     note_events.sort(
-        key=lambda event: {"note_off": 0, "note_on": 1}[event.type_]
+        # note_off must go before bar
+        key=lambda event: {"note_off": 0, "bar": 1, "note_on": 2}[event.type_]
     )
     note_events.sort(key=lambda event: event.when)
 
@@ -637,6 +683,7 @@ def midilike_encode(
         feature_names,
         df,
         for_token_classification=for_token_classification,
+        include_barlines=settings.include_barlines,
     )
 
     # LONGTERM what are or were "phantom" notes?
@@ -647,9 +694,9 @@ def midilike_encode(
 @dataclass
 class Note:
     # helper class used by midilike_decode
-    pitch: float
     onset: float
-    release: float
+    pitch: t.Optional[float] = None
+    release: t.Optional[float] = None
     type_: t.Optional[str] = "note"
     track: t.Optional[int] = None
     channel: t.Optional[int] = None
@@ -731,6 +778,9 @@ def midilike_decode(
                 time_shift = unknown_offset
             now += time_shift
             continue
+        if event == "bar":
+            notes.append(Note(onset=now, type_="bar"))
+            continue
         m = re.match(note_on_pattern, event)
         if m:
             pitch = float(m.group(1))
@@ -740,32 +790,37 @@ def midilike_decode(
         if m:
             pitch = float(m.group(1))
             start = note_ons[pitch].popleft()
-            notes.append(Note(pitch, start, now))
+            notes.append(Note(onset=start, pitch=pitch, release=now))
             continue
         raise ValueError(f"{event} is not a recognized event type")
 
     df = pd.DataFrame(n() for n in notes)
-    df.sort_values(
-        by=["onset", "pitch", "release"],
-        axis=0,
-        inplace=True,
-        ignore_index=True,
-    )
+    # df.sort_values(
+    #     by=["onset", "pitch", "release"],
+    #     axis=0,
+    #     inplace=True,
+    #     ignore_index=True,
+    # )
+    sort_df(df, inplace=True)
     return df
 
 
 def inputs_vocab_items(
-    min_pitch: int = 21,  # lowest pitch of piano
-    max_pitch: int = 108,  # highest pitch of piano
-    min_exp: int = -4,
-    max_exp: int = 4,
+    settings=MidiLikeSettings,
 ) -> t.List[str]:
-    time_shifter = TimeShifter(min_exp=min_exp, max_exp=max_exp)
+    time_shifter = TimeShifter(
+        min_exp=settings.min_exp, max_exp=settings.max_exp
+    )
     time_shifts = list(time_shifter.get_vocabulary().keys())
     note_ons = [
-        f"note_on<{pitch}>" for pitch in range(min_pitch, max_pitch + 1)
+        f"note_on<{pitch}>"
+        for pitch in range(settings.min_pitch, settings.max_pitch + 1)
     ]
     note_offs = [
-        f"note_off<{pitch}>" for pitch in range(min_pitch, max_pitch + 1)
+        f"note_off<{pitch}>"
+        for pitch in range(settings.min_pitch, settings.max_pitch + 1)
     ]
-    return time_shifts + note_ons + note_offs
+    out = time_shifts + note_ons + note_offs
+    if settings.include_barlines:
+        out.append("bar")
+    return out

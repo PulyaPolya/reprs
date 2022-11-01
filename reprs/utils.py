@@ -2,8 +2,9 @@ import numpy as np
 import pandas as pd  # pylint: disable=unused-import # used in doctests
 
 
-def get_idx_to_item_leq(sorted_array, val):
+def get_idx_to_item_leq(sorted_array, val, return_first_if_larger=False):
     """
+
     >>> get_idx_to_item_leq([1, 3, 6], 3)
     1
     >>> get_idx_to_item_leq([1, 3, 6], 5)
@@ -16,8 +17,14 @@ def get_idx_to_item_leq(sorted_array, val):
     Traceback (most recent call last):
     ValueError: 0 < first item of `sorted_array` 1
 
+    Unless return_first_if_larger is True:
+    >>> get_idx_to_item_leq([1, 3, 6], 0, return_first_if_larger=True)
+    0
+
     """
     if val < sorted_array[0]:
+        if return_first_if_larger:
+            return 0
         raise ValueError(
             f"{val} < first item of `sorted_array` {sorted_array[0]}"
         )

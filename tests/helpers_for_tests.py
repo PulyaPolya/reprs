@@ -17,7 +17,10 @@ def read_humdrum(path, remove_zero_length_notes=True):
     ).stdout.decode()
     df = pd.read_csv(io.StringIO(result), sep="\t")
     df.attrs["score_name"] = path
-    df = df[df.release > df.onset].reset_index(drop=True)
+    if remove_zero_length_notes:
+        df = df[(df.type != "note") | (df.release > df.onset)].reset_index(
+            drop=True
+        )
     df = sort_df(df, inplace=True)
     return df
 
@@ -38,7 +41,7 @@ def get_input_kern_paths(seed=None):
 
 
 def has_unison(df, note_i):
-    n = df.iloc[note_i]
+    n = df.loc[note_i]
     df[
         (df.pitch == n.pitch)
         & (df.release >= n.onset)
