@@ -7,13 +7,11 @@ except ImportError:
 from collections import defaultdict, deque
 from functools import partial  # pylint: disable=ungrouped-imports
 from numbers import Number
-import random
 import re
 import typing as t
 from dataclasses import dataclass
 import pandas as pd
 from time_shifter import TimeShifter
-import numpy as np
 
 from reprs.constants import (
     END_TOKEN,
@@ -27,6 +25,11 @@ from reprs.df_utils import (
     sort_df,
 )
 from reprs.shared import ReprSettings
+
+
+# @dataclass
+# class MidiLikeSettings(ReprSettings):
+#     include_barlines: bool = False
 
 
 @dataclass
@@ -182,14 +185,13 @@ class MIDILikeRepr:
         self.df_indices = []
         self.features = defaultdict(list)
         self.note_on_idx_to_repr_idx = {}
-        self.note_on_idx_to_time = {}
+        # self.note_on_idx_to_time = {}
         self.note_off_idx_to_repr_idx = {}
-        self.note_off_idx_to_time = {}
+        # self.note_off_idx_to_time = {}
         self.repr_idx_of_last_note_off_at_time = {}
         self.note_on_i_to_feature_i = defaultdict(dict)
         self.note_off_i_to_feature_i = defaultdict(dict)
         self.sounding_notes_at_time = {0: ()}
-        self.df_indices_of_sounding_notes = {}
         self.repr_note_on_indices = []
         self.repr_note_off_indices = []
         self.repr_idx_to_note_on_idx = {}
@@ -229,7 +231,7 @@ class MIDILikeRepr:
 
             if note_event.type_ == "note_off":
                 self.note_off_idx_to_repr_idx[note_event.idx] = len(self)
-                self.note_off_idx_to_time[note_event.idx] = now
+                # self.note_off_idx_to_time[note_event.idx] = now
                 self.repr_idx_of_last_note_off_at_time[now] = len(self)
                 self.repr_note_off_indices.append(len(self))
                 self.repr_idx_to_note_off_idx[len(self)] = note_event.idx
@@ -245,14 +247,14 @@ class MIDILikeRepr:
                 #   ahead at the upcoming note_off events to see if any
                 #   have the same time. So we just update the dict every
                 #   time we see a note_off event.
-                self.sounding_notes_at_time[now] = sorted(sounding_notes)
+                self.sounding_notes_at_time[now] = sounding_notes.copy()
             if note_event.type_ == "note_on":
                 if now not in self.sounding_notes_at_time:
                     # if "now" has no note_off events, we need to update
                     #   sounding pitches now
-                    self.sounding_notes_at_time[now] = sorted(sounding_notes)
+                    self.sounding_notes_at_time[now] = sounding_notes.copy()
                 self.note_on_idx_to_repr_idx[note_event.idx] = len(self)
-                self.note_on_idx_to_time[note_event.idx] = now
+                # self.note_on_idx_to_time[note_event.idx] = now
                 self.repr_note_on_indices.append(len(self))
                 self.repr_idx_to_note_on_idx[len(self)] = note_event.idx
                 for name in feature_names:
@@ -271,6 +273,11 @@ class MIDILikeRepr:
             if for_token_classification:
                 for name in feature_names:
                     self.features[name].append(NULL_FEATURE)
+
+        for time in self.sounding_notes_at_time:
+            self.sounding_notes_at_time[time] = sorted(
+                self.sounding_notes_at_time[time]
+            )
 
     @cached_property
     def feature_indices(self):
@@ -325,7 +332,7 @@ class MIDILikeRepr:
         self, start_note_on_i
     ) -> t.Tuple[t.List[int], t.List[str]]:
         start_orphan_indxs = self.sounding_notes_at_time[
-            self.note_on_idx_to_time[start_note_on_i]
+            self.df.onset.iloc[start_note_on_i]
         ]
         start_orphans = (
             (
@@ -344,9 +351,7 @@ class MIDILikeRepr:
         # _get_end_orphans is separated into two functions because we
         #   don't want to generate end_orphans within the while loop below,
         #   but only after breaking out of it
-        return self.sounding_notes_at_time[
-            self.note_off_idx_to_time[end_note_off_i]
-        ]
+        return self.sounding_notes_at_time[self.df.release.iloc[end_note_off_i]]
 
     def _get_end_orphans(self, end_orphan_indxs) -> t.List[str]:
         return (
@@ -435,11 +440,11 @@ class MIDILikeRepr:
             #   the last event to *include*
             repr_i = get_item_leq(self.repr_note_off_indices, exact_end_i - 1)
             possible_note_off_j = self.repr_idx_to_note_off_idx[repr_i]
-            possible_off_time = self.note_off_idx_to_time[possible_note_off_j]
+            possible_off_time = self.df.release.iloc[possible_note_off_j]
             end_note_off_i = get_index_to_item_leq(
                 eligible_releases, possible_off_time
             )
-            end_note_off_time = self.note_off_idx_to_time[end_note_off_i]
+            end_note_off_time = self.df.release.iloc[end_note_off_i]
             end_i = (
                 self.repr_idx_of_last_note_off_at_time[end_note_off_time] + 1
             )
@@ -503,7 +508,7 @@ class MIDILikeRepr:
             out = (
                 self.events[:],
                 {name: self.features[name][:] for name in self.features},
-                self.note_on_idx_to_time[0],
+                self.df.onset.iloc[0],
             )
             if return_repr_indices:
                 out += (SegmentIndices((), 0, len(self.events), ()),)
@@ -521,7 +526,7 @@ class MIDILikeRepr:
             features = self._get_features(
                 start_orphan_indxs, start_i, end_i, end_orphan_indxs
             )
-            out = (segment, features, self.note_on_idx_to_time[start_note_on_i])
+            out = (segment, features, self.df.onset.iloc[start_note_on_i])
             if return_repr_indices:
                 out += (
                     self._get_segment_indxs(
@@ -553,7 +558,7 @@ class MIDILikeRepr:
             out = (
                 start_orphans + self.events[start_i:],
                 features,
-                self.note_on_idx_to_time[start_note_on_i],
+                self.df.onset.iloc[start_note_on_i],
             )
             if return_repr_indices:
                 segment_indices = self._get_segment_indxs(
