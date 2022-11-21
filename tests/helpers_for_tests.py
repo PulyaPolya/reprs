@@ -14,19 +14,6 @@ HUMDRUM_DATA_PATH = os.getenv("HUMDRUM_DATA")
 
 read_humdrum = partial(read_krn, sort=True)
 
-# def read_humdrum(path, remove_zero_length_notes=True):
-#     result = subprocess.run(
-#         [TOTABLE, path], check=True, capture_output=True
-#     ).stdout.decode()
-#     df = pd.read_csv(io.StringIO(result), sep="\t")
-#     df.attrs["score_name"] = path
-#     if remove_zero_length_notes:
-#         df = df[(df.type != "note") | (df.release > df.onset)].reset_index(
-#             drop=True
-#         )
-#     df = sort_df(df, inplace=True)
-#     return df
-
 
 def get_input_kern_paths(seed=None):
     krn_paths = [
