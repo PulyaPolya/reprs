@@ -1,11 +1,13 @@
 import itertools as it
 
+from music_df import quantize_df
+
 from reprs.image_like import (
     ImageLikeRepr,
     ImageLikeSettings,
     ImageLikeFeatureVocab,
 )
-from reprs.df_utils import quantize_df
+
 
 from tests.helpers_for_tests import read_humdrum, get_input_kern_paths
 

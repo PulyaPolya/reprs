@@ -1,5 +1,7 @@
 import itertools as it
 
+from metricker import apply_weights
+
 from reprs.midi_like import (
     MidiLikeSettings,
     midilike_encode,
@@ -20,15 +22,19 @@ def test_midi_like(n_kern_files):
     paths = get_input_kern_paths(seed=42)
 
     for i, path in enumerate(paths):
-        for include_barlines in (True, False):
+        include_barlines = False  # TODO
+        for include_metric_weights in (True, False):
             settings = MidiLikeSettings(
-                include_barlines=include_barlines, for_token_classification=True
+                include_metric_weights=include_metric_weights,
+                for_token_classification=True,
             )
             allowed_error = 2 ** (settings.min_ts_exp - 1)
             # path = "/Users/malcolm/datasets/humdrum-data/corelli/op3/op3n12-02.krn"
             # path = "/Users/malcolm/datasets/humdrum-data/jrp/Jos/kern/Jos1808-Qui_habitat_in_adjutorio_altissimi.krn"
             print(f"{i + 1}/{len(paths)}: {path}")
             df = read_humdrum(path)
+            if include_metric_weights:
+                apply_weights(df)
             encoded = midilike_encode(
                 df,
                 settings,
@@ -138,7 +144,8 @@ def test_segment(n_kern_files):
 
     for i, path in enumerate(paths):
         print(f"{i + 1}/{len(paths)}: {path}")
-        for include_barlines in (True, False):
+        include_barlines = False
+        for include_metric_weights in (True, False):
             boundary_tokens = True
             for_token_class = True
             for window_len, hop in it.product(
@@ -147,11 +154,14 @@ def test_segment(n_kern_files):
             ):
                 settings = MidiLikeSettings(
                     include_barlines=include_barlines,
+                    include_metric_weights=include_metric_weights,
                     start_token=boundary_tokens,
                     end_token=boundary_tokens,
                     for_token_classification=for_token_class,
                 )
-                df = read_humdrum(path)
+                df = read_humdrum(path, sort=True)
+                if include_metric_weights:
+                    apply_weights(df)
                 encoded = midilike_encode(
                     df,
                     settings,

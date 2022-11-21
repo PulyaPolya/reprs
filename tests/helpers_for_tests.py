@@ -3,26 +3,29 @@ import io
 import os
 import random
 
+from functools import partial
+
 import pandas as pd
 
-from reprs.df_utils import sort_df
+from music_df import read_krn
 
 TOTABLE = os.getenv("TOTABLE")
 HUMDRUM_DATA_PATH = os.getenv("HUMDRUM_DATA")
 
+read_humdrum = partial(read_krn, sort=True)
 
-def read_humdrum(path, remove_zero_length_notes=True):
-    result = subprocess.run(
-        [TOTABLE, path], check=True, capture_output=True
-    ).stdout.decode()
-    df = pd.read_csv(io.StringIO(result), sep="\t")
-    df.attrs["score_name"] = path
-    if remove_zero_length_notes:
-        df = df[(df.type != "note") | (df.release > df.onset)].reset_index(
-            drop=True
-        )
-    df = sort_df(df, inplace=True)
-    return df
+# def read_humdrum(path, remove_zero_length_notes=True):
+#     result = subprocess.run(
+#         [TOTABLE, path], check=True, capture_output=True
+#     ).stdout.decode()
+#     df = pd.read_csv(io.StringIO(result), sep="\t")
+#     df.attrs["score_name"] = path
+#     if remove_zero_length_notes:
+#         df = df[(df.type != "note") | (df.release > df.onset)].reset_index(
+#             drop=True
+#         )
+#     df = sort_df(df, inplace=True)
+#     return df
 
 
 def get_input_kern_paths(seed=None):

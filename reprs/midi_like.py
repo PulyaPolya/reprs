@@ -17,6 +17,8 @@ import warnings
 import pandas as pd
 from time_shifter import TimeShifter
 
+from music_df import sort_df
+
 from reprs.constants import (
     END_TOKEN,
     PAD_TOKEN,
@@ -26,7 +28,6 @@ from reprs.utils import get_idx_to_item_leq, get_index_to_item_leq, get_item_leq
 from reprs.df_utils import (
     get_eligible_onsets,
     get_eligible_releases,
-    sort_df,
 )
 from reprs.shared import ReprSettings
 from reprs.writers import CSVChunkWriter
@@ -40,7 +41,7 @@ class Event:
     idx: int
     pitch: int = 0
     features: t.Optional[dict] = None
-    phantom: bool = False
+    weight: t.Optional[int] = None
 
     def to_token(self):
         if self.type_ == "note_on":
@@ -183,6 +184,7 @@ class MIDILikeRepr:
         df=None,
         for_token_classification: bool = False,
         include_barlines: bool = False,
+        min_weight: Number = float("inf"),
     ):
         self.df = df
         self.ts = time_shifter
@@ -191,9 +193,7 @@ class MIDILikeRepr:
         self.df_indices = []
         self.features = defaultdict(list)
         self.note_on_idx_to_repr_idx = {}
-        # self.note_on_idx_to_time = {}
         self.note_off_idx_to_repr_idx = {}
-        # self.note_off_idx_to_time = {}
         self.repr_idx_of_last_note_off_at_time = {}
         self.note_on_i_to_feature_i = defaultdict(dict)
         self.note_off_i_to_feature_i = defaultdict(dict)
@@ -217,6 +217,7 @@ class MIDILikeRepr:
                     self.features[name].append(NULL_FEATURE)
         now = None
         sounding_notes = set()
+        time_has_shifted = True
 
         for note_event in note_events:
             if note_event.when != now:
@@ -233,6 +234,7 @@ class MIDILikeRepr:
                             self.features[name].extend(
                                 [NULL_FEATURE for _ in time_shifts]
                             )
+                time_has_shifted = True
             if note_event.type_ == "bar":
                 if include_barlines:
                     self.note_on_idx_to_repr_idx[note_event.idx] = len(self)
@@ -252,7 +254,6 @@ class MIDILikeRepr:
                 continue
             if note_event.type_ == "note_off":
                 self.note_off_idx_to_repr_idx[note_event.idx] = len(self)
-                # self.note_off_idx_to_time[note_event.idx] = now
                 self.repr_idx_of_last_note_off_at_time[now] = len(self)
                 self.repr_note_off_indices.append(len(self))
                 self.repr_idx_to_note_off_idx[len(self)] = note_event.idx
@@ -275,7 +276,6 @@ class MIDILikeRepr:
                     #   sounding pitches now
                     self.sounding_notes_at_time[now] = sounding_notes.copy()
                 self.note_on_idx_to_repr_idx[note_event.idx] = len(self)
-                # self.note_on_idx_to_time[note_event.idx] = now
                 self.repr_note_on_indices.append(len(self))
                 self.repr_idx_to_note_on_idx[len(self)] = note_event.idx
                 for name in feature_names:
@@ -287,7 +287,24 @@ class MIDILikeRepr:
 
             self.events.append(f"{note_event.type_}<{int(note_event.pitch)}>")
             self.df_indices.append(note_event.idx)
-            # self.events.append(note_event.to_token())
+            if note_event.type_ == "note_on" and time_has_shifted:
+                # NB we put "weight" events *after* the first note at the new
+                #   time. This is maybe suboptimal in that some notes will be
+                #   followed by "weight" events while others won't, but the
+                #   neural net should be able to handle this I expect. The
+                #   alternative is to put the "weight" event before the note on
+                #   (after any note_offs). The difficulty here is that then we
+                #   have to figure out some way of "re-inserting" the weight
+                #   event when slicing segments.
+                if (
+                    note_event.weight is not None
+                    and note_event.weight >= min_weight
+                ):
+                    self.events.append(f"weight<{note_event.weight}>")
+                    if for_token_classification:
+                        for name in feature_names:
+                            self.features[name].append(NULL_FEATURE)
+                time_has_shifted = False
         if end_token:
             self.events.append(END_TOKEN)
             self.df_indices.append(None)
@@ -536,15 +553,6 @@ class MIDILikeRepr:
         eligible_onsets_i = 0
         max_eligible_onset_i = len(eligible_onsets) - 1
         if allow_short_initial_window and len(self.events) < min_window_len:
-
-            # out = (
-            #     self.events[:],
-            #     {name: self.features[name][:] for name in self.features},
-            #     self.df.onset.loc[0],
-            # )
-            # if return_repr_indices:
-            #     out += (SegmentIndices((), 0, len(self.events), ()),)
-            # yield self._return(return_repr_indices=return_repr_indices)
             out = {
                 "input": self.events[:],
                 "segment_onset": self.df.onset.loc[0],
@@ -568,7 +576,6 @@ class MIDILikeRepr:
             features = self._get_features(
                 start_orphan_indxs, start_i, end_i, end_orphan_indxs
             )
-            # out = (segment, features, self.df.onset.loc[start_note_on_i])
             out = {
                 "input": segment,
                 "segment_onset": self.df.onset.loc[start_note_on_i],
@@ -577,12 +584,6 @@ class MIDILikeRepr:
                 out["repr_indices"] = self._get_segment_indxs(
                     start_orphan_indxs, start_i, end_i, end_orphan_indxs
                 )
-            # if return_repr_indices:
-            # out += (
-            #     self._get_segment_indxs(
-            #         start_orphan_indxs, start_i, end_i, end_orphan_indxs
-            #     ),
-            # )
             yield out
             if eligible_onsets_i == max_eligible_onset_i:
                 # if there are very many parts, it is possible to get "stuck"
@@ -605,16 +606,6 @@ class MIDILikeRepr:
                 start_note_on_i
             )
             features = self._get_features(start_orphan_indxs, start_i, None, [])
-            # out = (
-            #     start_orphans + self.events[start_i:],
-            #     features,
-            #     self.df.onset.loc[start_note_on_i],
-            # )
-            # if return_repr_indices:
-            #     segment_indices = self._get_segment_indxs(
-            #         start_orphan_indxs, start_i, len(self.events), []
-            #     )
-            #     out += (segment_indices,)
             out = {
                 "input": start_orphans + self.events[start_i:],
                 "segment_onset": self.df.onset.loc[start_note_on_i],
@@ -629,10 +620,7 @@ class MIDILikeRepr:
 def midilike_encode(
     df: pd.DataFrame,
     settings: MidiLikeSettings,
-    # end_token: bool = False,
-    # start_token: bool = False,
     feature_names: t.Union[None, str, t.Iterable[str]] = None,
-    # for_token_classification: bool = False,
     sort: bool = True,
     **kwargs,
 ):
@@ -640,17 +628,20 @@ def midilike_encode(
     If the DataFrame is already sorted, then use sort=False. The sorting
     should be by onset, then by pitch, then by release.
     """
+    for kwarg in kwargs:
+        warnings.warn(f"unused kwarg to midilike_encode '{kwarg}'")
     if sort:
         df = sort_df(df, inplace=False)
     if settings.include_barlines:
-        # if "type" not in df.columns:
-        #     warnings.warn(
-        #         "`include_barlines` is True but df has no 'type' column"
-        #     )
         if "bar" not in df.type.values:
             warnings.warn(
                 "`include_barlines` is True but there are no 'bar' events in `df`"
             )
+    if settings.include_metric_weights and "weight" not in df.columns:
+        raise ValueError(
+            "`include_metric_weights` is True but there is no "
+            "`weight` column in `df`"
+        )
     # Unlike the previous version of this function, this function doesn't
     #   handle splitting the dataframe.
     if isinstance(feature_names, str):
@@ -677,6 +668,7 @@ def midilike_encode(
             raise ValueError(
                 "remove zero-length notes from df before calling midilike_encode()"
             )
+        features = {name: row[name] for name in feature_names if name in row}
         note_events.append(
             Event(
                 "note_on",
@@ -685,10 +677,10 @@ def midilike_encode(
                 # some features, like "enharmonic_spelling", may be null
                 # for some examples
                 pitch=row.pitch,
-                features={
-                    name: row[name] for name in feature_names if name in row
-                },
-                # phantom=note.phantom if phantom_features else False,
+                features=features,
+                weight=int(row.weight)
+                if settings.include_metric_weights
+                else None,
             )
         )
         note_events.append(
@@ -697,7 +689,6 @@ def midilike_encode(
                 row.release,
                 idx,
                 pitch=row.pitch,
-                # phantom=note.phantom if phantom_features else False,
             )
         )
     note_events.sort(key=lambda event: event.pitch)
@@ -716,6 +707,9 @@ def midilike_encode(
         df,
         for_token_classification=settings.for_token_classification,
         include_barlines=settings.include_barlines,
+        min_weight=settings.min_weight_to_encode
+        if settings.include_metric_weights
+        else float("inf"),
     )
 
     # LONGTERM what are or were "phantom" notes?
@@ -813,6 +807,8 @@ def midilike_decode(
         if event == "bar":
             notes.append(Note(onset=now, type_="bar"))
             continue
+        if event.startswith("weight"):
+            continue
         m = re.match(note_on_pattern, event)
         if m:
             pitch = float(m.group(1))
@@ -853,6 +849,13 @@ def inputs_vocab_items(
         for pitch in range(settings.min_pitch, settings.max_pitch + 1)
     ]
     out = time_shifts + note_ons + note_offs
+    if settings.include_metric_weights:
+        out.extend(
+            [
+                f"weight<{i}>"
+                for i in range(settings.min_weight_to_encode, 2 + 1)
+            ]
+        )
     if settings.include_barlines:
         out.append("bar")
     return out
@@ -861,6 +864,8 @@ def inputs_vocab_items(
 @dataclass
 class MidiLikeSettings(ReprSettings):
     include_barlines: bool = False
+    include_metric_weights: bool = False
+    min_weight_to_encode: int = 0
     end_token: bool = False
     start_token: bool = False
     for_token_classification: bool = False
