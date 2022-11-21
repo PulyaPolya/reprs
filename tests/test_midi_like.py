@@ -21,7 +21,9 @@ def test_midi_like(n_kern_files):
 
     for i, path in enumerate(paths):
         for include_barlines in (True, False):
-            settings = MidiLikeSettings(include_barlines=include_barlines)
+            settings = MidiLikeSettings(
+                include_barlines=include_barlines, for_token_classification=True
+            )
             allowed_error = 2 ** (settings.min_ts_exp - 1)
             # path = "/Users/malcolm/datasets/humdrum-data/corelli/op3/op3n12-02.krn"
             # path = "/Users/malcolm/datasets/humdrum-data/jrp/Jos/kern/Jos1808-Qui_habitat_in_adjutorio_altissimi.krn"
@@ -31,7 +33,6 @@ def test_midi_like(n_kern_files):
                 df,
                 settings,
                 feature_names="spelling",
-                for_token_classification=True,
                 sort=False,
             )
             # The only event types that are processed for the time being
@@ -44,23 +45,24 @@ def test_midi_like(n_kern_files):
             assert (
                 sorted(encoded.note_on_idx_to_repr_idx.keys()) == df.index
             ).all()
+            rv = encoded()
             for j in encoded.note_on_idx_to_repr_idx.values():
                 assert (
-                    encoded.events[j].startswith("note_on")
-                    or encoded.events[j] == "bar"
+                    rv["input"][j].startswith("note_on")
+                    or rv["input"][j] == "bar"
                 )
             for j in encoded.note_off_idx_to_repr_idx.values():
-                assert encoded.events[j].startswith("note_off")
+                assert rv["input"][j].startswith("note_off")
             for repr_i in encoded.repr_note_off_indices:
-                assert encoded.events[repr_i].startswith("note_off")
+                assert rv["input"][repr_i].startswith("note_off")
             if include_barlines:
-                assert "bar" in encoded.events
+                assert "bar" in rv["input"]
             note_i = 0
-            for repr_i, event in enumerate(encoded.events):
+            for repr_i, event in enumerate(rv["input"]):
                 if event.startswith("note_off"):
                     assert encoded.repr_note_off_indices[note_i] == repr_i
                     note_i += 1
-            decoded = midilike_decode(encoded.events)
+            decoded = midilike_decode(rv["input"])
             no_zero_len_note_df = df[
                 (df.type != "note") | (df.onset != df.release)
             ]
@@ -71,15 +73,13 @@ def test_midi_like(n_kern_files):
                 assert encoded.df.release.loc[j] == note.release
                 assert note.onset in encoded.sounding_notes_at_time
                 assert note.release in encoded.sounding_notes_at_time
-            for name in encoded.features:
-                assert len(encoded.events) == len(encoded.features[name])
-                for event, feature in zip(
-                    encoded.events, encoded.features[name]
-                ):
-                    if event.startswith("note_on"):
-                        assert feature != NULL_FEATURE
-                    else:
-                        assert feature == NULL_FEATURE
+
+            assert len(rv["input"]) == len(rv["spelling"])
+            for event, feature in zip(rv["input"], rv["spelling"]):
+                if event.startswith("note_on"):
+                    assert feature != NULL_FEATURE
+                else:
+                    assert feature == NULL_FEATURE
 
             for (j, src_note), (k, dst_note) in zip(
                 no_zero_len_note_df.iterrows(), decoded.iterrows()
@@ -139,37 +139,40 @@ def test_segment(n_kern_files):
     for i, path in enumerate(paths):
         print(f"{i + 1}/{len(paths)}: {path}")
         for include_barlines in (True, False):
-            settings = MidiLikeSettings(include_barlines=include_barlines)
-            df = read_humdrum(path)
-            encoded = midilike_encode(
-                df,
-                settings,
-                feature_names="spelling",
-                for_token_classification=True,
-                sort=False,
-            )
-            # The only event types that are processed for the time being
-            #   are "bar" and "note". If I update that then I'll want to update
-            #   the next lines:
-            if include_barlines:
-                df = df[df.type.isin(["note", "bar"])]
-                note_df = df[df.type == "note"]
-            else:
-                df = note_df = df[df.type == "note"]
-            for_token_class = True
             boundary_tokens = True
+            for_token_class = True
             for window_len, hop in it.product(
                 (64, 128),
                 (48, 4, 128),
             ):
+                settings = MidiLikeSettings(
+                    include_barlines=include_barlines,
+                    start_token=boundary_tokens,
+                    end_token=boundary_tokens,
+                    for_token_classification=for_token_class,
+                )
+                df = read_humdrum(path)
+                encoded = midilike_encode(
+                    df,
+                    settings,
+                    feature_names="spelling",
+                    for_token_classification=True,
+                    sort=False,
+                )
+                # The only event types that are processed for the time being
+                #   are "bar" and "note". If I update that then I'll want to update
+                #   the next lines:
+                if include_barlines:
+                    df = df[df.type.isin(["note", "bar"])]
+                    note_df = df[df.type == "note"]
+                else:
+                    df = note_df = df[df.type == "note"]
+
                 print(".", end="", flush=True)
                 encoded = midilike_encode(
                     df,
                     settings,
                     feature_names="spelling",
-                    end_token=boundary_tokens,
-                    start_token=boundary_tokens,
-                    for_token_classification=for_token_class,
                     sort=False,
                 )
                 # These tests seem to be redundant given the tests in
@@ -192,7 +195,7 @@ def test_segment(n_kern_files):
                 enforce_only_one_item = False
                 iteration_should_finish_before_here = False
                 prev_offset = -1.0
-                for i, (segment, features, offset, repr_indices) in enumerate(
+                for i, (segment) in enumerate(
                     encoded.segment(
                         window_len,
                         hop,
@@ -202,24 +205,27 @@ def test_segment(n_kern_files):
                         return_repr_indices=True,
                     )
                 ):
-                    for segment_i, repr_i in enumerate(repr_indices):
-                        repr_i = repr_indices[segment_i]
+                    for segment_i, repr_i in enumerate(segment["repr_indices"]):
+                        repr_i = segment["repr_indices"][segment_i]
                         if repr_i is None:
                             continue
-                        assert encoded.events[repr_i] == segment[segment_i]
+                        assert (
+                            encoded.events[repr_i]
+                            == segment["input"][segment_i]
+                        )
                     assert not iteration_should_finish_before_here
-                    assert offset >= prev_offset
-                    prev_offset = offset
+                    assert segment["segment_onset"] >= prev_offset
+                    prev_offset = segment["segment_onset"]
                     if i == 0:
                         if boundary_tokens:
-                            assert segment[0] == START_TOKEN
+                            assert segment["input"][0] == START_TOKEN
                         else:
-                            assert segment[0] != START_TOKEN
+                            assert segment["input"][0] != START_TOKEN
                     elif enforce_only_one_item:
                         raise ValueError("this df should only have one segment")
-                    assert len(segment) <= window_len
+                    assert len(segment["input"]) <= window_len
                     try:
-                        assert len(segment) >= min_window_len
+                        assert len(segment["input"]) >= min_window_len
                     except AssertionError:
                         try:
                             assert i == 0
@@ -230,30 +236,33 @@ def test_segment(n_kern_files):
                             enforce_only_one_item = True
                     note_ons = [
                         event
-                        for event in segment
+                        for event in segment["input"]
                         if event.startswith("note_on")
                     ]
-                    bars = [event for event in segment if event == "bar"]
+                    bars = [
+                        event for event in segment["input"] if event == "bar"
+                    ]
                     note_offs = [
                         event
-                        for event in segment
+                        for event in segment["input"]
                         if event.startswith("note_off")
                     ]
                     assert len(note_ons) == len(note_offs)
                     if for_token_class:
-                        for feature in features.values():
-                            assert len(segment) == len(feature)
-                            for event, feature_val in zip(segment, feature):
-                                if event.startswith("note_on"):
-                                    assert feature_val != NULL_FEATURE
-                                else:
-                                    assert feature_val == NULL_FEATURE
+                        assert len(segment["input"]) == len(segment["spelling"])
+                        for event, feature_val in zip(
+                            segment["input"], segment["spelling"]
+                        ):
+                            if event.startswith("note_on"):
+                                assert feature_val != NULL_FEATURE
+                            else:
+                                assert feature_val == NULL_FEATURE
                     else:
                         assert all(
-                            len(note_ons) == len(features[name])
-                            for name in features
+                            len(note_ons) == len(segment["spelling"][name])
+                            for name in segment["spelling"]
                         )
-                    decoded = midilike_decode(segment)
+                    decoded = midilike_decode(segment["input"])
                     assert len(decoded) == len(note_ons) + len(bars)
                 for_token_class = True
                 boundary_tokens = False

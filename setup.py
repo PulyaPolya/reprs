@@ -8,7 +8,8 @@ setup(
     description="TODO",
     long_description="TODO",
     long_description_content_type="text/markdown",
-    install_requires=[],
+    # TODO add time_shifter to requirements
+    install_requires=["numpy", "pandas", "tqdm"],
     url="TODO",
     project_urls={
         "Bug Tracker": "TODO",

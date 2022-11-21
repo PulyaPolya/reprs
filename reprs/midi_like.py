@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 try:
     from functools import cached_property
 except ImportError:
@@ -27,11 +29,7 @@ from reprs.df_utils import (
     sort_df,
 )
 from reprs.shared import ReprSettings
-
-
-@dataclass
-class MidiLikeSettings(ReprSettings):
-    include_barlines: bool = False
+from reprs.writers import CSVChunkWriter
 
 
 @dataclass
@@ -306,7 +304,7 @@ class MIDILikeRepr:
     def feature_indices(self):
         """returns a list of integers that indicate where the note-ons in
         self.events are (and thus where we should expect predictions in
-        predicted features, as opposed to where we should expect tags)"""
+        predicted features, as opposed to where we should expect na)"""
         return list(self.repr_idx_to_note_on_idx.keys())
 
     def transpose(self, interval: int) -> t.List[str]:
@@ -496,6 +494,9 @@ class MIDILikeRepr:
             end_i_decremented = True
         return end_i, end_orphan_indxs
 
+    def __call__(self):
+        return {"input": self.events} | self._get_features([], None, None, [])
+
     def segment(
         self,
         window_len: int,
@@ -535,13 +536,24 @@ class MIDILikeRepr:
         eligible_onsets_i = 0
         max_eligible_onset_i = len(eligible_onsets) - 1
         if allow_short_initial_window and len(self.events) < min_window_len:
-            out = (
-                self.events[:],
-                {name: self.features[name][:] for name in self.features},
-                self.df.onset.loc[0],
-            )
+
+            # out = (
+            #     self.events[:],
+            #     {name: self.features[name][:] for name in self.features},
+            #     self.df.onset.loc[0],
+            # )
+            # if return_repr_indices:
+            #     out += (SegmentIndices((), 0, len(self.events), ()),)
+            # yield self._return(return_repr_indices=return_repr_indices)
+            out = {
+                "input": self.events[:],
+                "segment_onset": self.df.onset.loc[0],
+            } | {name: self.features[name][:] for name in self.features}
+
             if return_repr_indices:
-                out += (SegmentIndices((), 0, len(self.events), ()),)
+                out["repr_indices"] = SegmentIndices(
+                    (), 0, len(self.events), ()
+                )
             yield out
             return
         while start_i < len(self.events) - min_window_len:
@@ -556,13 +568,21 @@ class MIDILikeRepr:
             features = self._get_features(
                 start_orphan_indxs, start_i, end_i, end_orphan_indxs
             )
-            out = (segment, features, self.df.onset.loc[start_note_on_i])
+            # out = (segment, features, self.df.onset.loc[start_note_on_i])
+            out = {
+                "input": segment,
+                "segment_onset": self.df.onset.loc[start_note_on_i],
+            } | features
             if return_repr_indices:
-                out += (
-                    self._get_segment_indxs(
-                        start_orphan_indxs, start_i, end_i, end_orphan_indxs
-                    ),
+                out["repr_indices"] = self._get_segment_indxs(
+                    start_orphan_indxs, start_i, end_i, end_orphan_indxs
                 )
+            # if return_repr_indices:
+            # out += (
+            #     self._get_segment_indxs(
+            #         start_orphan_indxs, start_i, end_i, end_orphan_indxs
+            #     ),
+            # )
             yield out
             if eligible_onsets_i == max_eligible_onset_i:
                 # if there are very many parts, it is possible to get "stuck"
@@ -585,27 +605,36 @@ class MIDILikeRepr:
                 start_note_on_i
             )
             features = self._get_features(start_orphan_indxs, start_i, None, [])
-            out = (
-                start_orphans + self.events[start_i:],
-                features,
-                self.df.onset.loc[start_note_on_i],
-            )
+            # out = (
+            #     start_orphans + self.events[start_i:],
+            #     features,
+            #     self.df.onset.loc[start_note_on_i],
+            # )
+            # if return_repr_indices:
+            #     segment_indices = self._get_segment_indxs(
+            #         start_orphan_indxs, start_i, len(self.events), []
+            #     )
+            #     out += (segment_indices,)
+            out = {
+                "input": start_orphans + self.events[start_i:],
+                "segment_onset": self.df.onset.loc[start_note_on_i],
+            } | features
             if return_repr_indices:
-                segment_indices = self._get_segment_indxs(
+                out["repr_indices"] = self._get_segment_indxs(
                     start_orphan_indxs, start_i, len(self.events), []
                 )
-                out += (segment_indices,)
             yield out
 
 
 def midilike_encode(
     df: pd.DataFrame,
     settings: MidiLikeSettings,
-    end_token: bool = False,
-    start_token: bool = False,
+    # end_token: bool = False,
+    # start_token: bool = False,
     feature_names: t.Union[None, str, t.Iterable[str]] = None,
-    for_token_classification: bool = False,
+    # for_token_classification: bool = False,
     sort: bool = True,
+    **kwargs,
 ):
     """
     If the DataFrame is already sorted, then use sort=False. The sorting
@@ -635,12 +664,15 @@ def midilike_encode(
     #   finding the insertion position for every event isn't worth it.
     note_events = []
     for idx, row in df.iterrows():
-        if row.type == "bar" and settings.include_barlines:
-            note_events.append(Event("bar", row.onset, idx))
-        # elif row.type == "time_signature":
-        #     TODO
-        if row.type != "note":
-            continue
+        if "type" in row.index:
+            # TODO should warn if include_barlines is True and "type"
+            #   is not in index
+            if row.type == "bar" and settings.include_barlines:
+                note_events.append(Event("bar", row.onset, idx))
+            # elif row.type == "time_signature":
+            #     TODO
+            if row.type != "note":
+                continue
         if row.onset == row.release:
             raise ValueError(
                 "remove zero-length notes from df before calling midilike_encode()"
@@ -678,11 +710,11 @@ def midilike_encode(
     out = MIDILikeRepr(
         note_events,
         settings.time_shifter,
-        end_token,
-        start_token,
+        settings.end_token,
+        settings.start_token,
         feature_names,
         df,
-        for_token_classification=for_token_classification,
+        for_token_classification=settings.for_token_classification,
         include_barlines=settings.include_barlines,
     )
 
@@ -806,10 +838,10 @@ def midilike_decode(
 
 
 def inputs_vocab_items(
-    settings=MidiLikeSettings,
+    settings: MidiLikeSettings,
 ) -> t.List[str]:
     time_shifter = TimeShifter(
-        min_exp=settings.min_exp, max_exp=settings.max_exp
+        min_exp=settings.min_ts_exp, max_exp=settings.max_ts_exp
     )
     time_shifts = list(time_shifter.get_vocabulary().keys())
     note_ons = [
@@ -824,3 +856,19 @@ def inputs_vocab_items(
     if settings.include_barlines:
         out.append("bar")
     return out
+
+
+@dataclass
+class MidiLikeSettings(ReprSettings):
+    include_barlines: bool = False
+    end_token: bool = False
+    start_token: bool = False
+    for_token_classification: bool = False
+
+    @property
+    def file_writer(self):
+        return CSVChunkWriter
+
+    @property
+    def encode_f(self):
+        return midilike_encode
