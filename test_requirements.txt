@@ -1,3 +1,4 @@
 black
+matplotlib
 pytest
 -e /Users/malcolm/google_drive/python/malmus/metricker

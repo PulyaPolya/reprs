@@ -51,13 +51,6 @@ class ImageLikeRepr:
             }
         else:
             self.feature_vocabs = {}
-            #  and all(
-            #     (
-            #         name in feature_vocabs
-            #         and isinstance(feature_vocabs[name], ImageLikeFeatureVocab)
-            #     )
-            #     for name in feature_names
-            # )
         self.feature_masks = {}
         if settings.min_dur is not None:
             df = df[df.release - df.onset >= settings.min_dur]
@@ -69,7 +62,9 @@ class ImageLikeRepr:
         if onsets is None:
             self._onsets = None
         else:
-            self._onsets = self._to_multi_hot(onsets)
+            self._onsets = self._to_multi_hot(
+                onsets, tuples=self.settings.onsets == "weights"
+            )
 
     def _df_to_slices(self, df: pd.DataFrame):
         def _get_empty():
@@ -84,9 +79,20 @@ class ImageLikeRepr:
         else:
             onsets = None
         min_pitch = self.settings.min_pitch
+        weights = self.settings.onsets == "weights"
+        min_weight = self.settings.min_weight_to_encode
+        weight_offset = 2 - min_weight
         for _, note in df.iterrows():
+            # TODO what about unisons? are the weights added together?
             if self.settings.onsets:
-                onsets[note.onset].append(int(note.pitch) - min_pitch)
+                onsets[note.onset].append(
+                    (
+                        int(note.pitch) - min_pitch,
+                        weight_offset + note.weight
+                        if (weights and note.weight >= min_weight)
+                        else 1,
+                    )
+                )
             for i in range(note.onset, note.release):
                 out[i].append(int(note.pitch) - min_pitch)
                 for feature_name, vocab in self.feature_vocabs.items():
@@ -97,10 +103,11 @@ class ImageLikeRepr:
 
     def _to_multi_hot(
         self,
-        slices: t.List[t.List[int]],
+        slices: t.List[t.List[t.Union[int, t.Tuple[int, int]]]],
         feature_slices: t.Optional[
             t.DefaultDict[str, t.List[t.List[int]]]
         ] = None,
+        tuples: bool = False,
     ) -> np.ndarray:
         out = np.zeros(
             (len(slices), self.settings.max_pitch - self.settings.min_pitch),
@@ -109,8 +116,15 @@ class ImageLikeRepr:
         if feature_slices:
             for name in feature_slices:
                 self.feature_masks[name] = np.zeros_like(out, dtype=int)
+
         for i, slice_ in enumerate(slices):
-            out[i][slice_] = 1
+            if not slice_:
+                continue
+            if tuples:
+                slice_, values = zip(*slice_)
+                out[i][np.array(slice_)] = values
+            else:
+                out[i][slice_] = 1
             if feature_slices:
                 for name, mask in self.feature_masks.items():
                     mask[i][slice_] = feature_slices[name][i]
@@ -208,7 +222,9 @@ class ImageLikeRepr:
 class ImageLikeSettings(ReprSettings):
     tpq: int = 8
     min_dur: t.Optional[float] = None
-    onsets: bool = False
+    # onsets can be "yes" or "weights"
+    onsets: t.Optional[str] = None
+    min_weight_to_encode: int = 0
     # if fixed_segment_len is True, then when calling ImageLikeRepr.segment,
     #   each segment will be *exactly* window_len
     fixed_segment_len: bool = True
@@ -223,3 +239,5 @@ class ImageLikeSettings(ReprSettings):
         if self.fixed_segment_len:
             self.allow_short_initial_window = False
             self.allow_short_last_window = False
+        if self.onsets is not None:
+            assert self.onsets in ("yes", "weights")
