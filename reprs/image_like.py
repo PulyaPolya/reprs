@@ -14,13 +14,13 @@ import typing as t
 import pandas as pd
 import numpy as np
 
-from music_df import quantize_df
-
-from reprs.shared import ReprSettings
-from reprs.df_utils import (
+from music_df import (
+    quantize_df,
     get_eligible_onsets,
     get_eligible_releases,
 )
+
+from reprs.shared import ReprSettings
 from reprs.vocab import Vocab
 from reprs.utils import get_idx_to_item_leq, get_index_to_item_leq, get_item_leq
 

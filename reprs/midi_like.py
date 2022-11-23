@@ -6,30 +6,38 @@ except ImportError:
     # python <= 3.7
     from cached_property import cached_property  # type:ignore
 
-from collections import defaultdict, deque
-from functools import partial
 import math  # pylint: disable=ungrouped-imports
-from numbers import Number
+import os
+import pickle
 import re
 import typing as t
-from dataclasses import dataclass
 import warnings
+
+from collections import defaultdict, deque
+from dataclasses import dataclass
+from functools import partial
+from numbers import Number
+
 import pandas as pd
+
 from time_shifter import TimeShifter
 
-from music_df import sort_df
+from music_df import (
+    sort_df,
+    get_eligible_onsets,
+    get_eligible_releases,
+)
 
 from reprs.constants import (
     END_TOKEN,
     PAD_TOKEN,
     START_TOKEN,
+    SPECIALS,
+    UNKNOWN_TOKEN,
 )
 from reprs.utils import get_idx_to_item_leq, get_index_to_item_leq, get_item_leq
-from reprs.df_utils import (
-    get_eligible_onsets,
-    get_eligible_releases,
-)
 from reprs.shared import ReprSettings
+from reprs.vocab import Vocab
 from reprs.writers import CSVChunkWriter
 
 
@@ -859,6 +867,27 @@ def inputs_vocab_items(
     if settings.include_barlines:
         out.append("bar")
     return out
+
+
+def get_inputs_vocab(dataset_root_dir):
+    vocab_path = os.path.join(dataset_root_dir, "inputs_vocab.list.pickle")
+    with open(vocab_path, "rb") as inf:
+        vocab_items = pickle.load(inf)
+    inputs_vocab = Vocab(vocab_items, specials=SPECIALS)
+    inputs_vocab.set_default_index(inputs_vocab[UNKNOWN_TOKEN])
+    return inputs_vocab
+
+
+def get_target_vocab(dataset_root_dir):
+    vocab_path = os.path.join(dataset_root_dir, "targets_vocab.list.pickle")
+    with open(vocab_path, "rb") as inf:
+        vocab_items = pickle.load(inf)
+    targets_vocab = Vocab(vocab_items)
+    # I don't think there should be any OOV items among the targets so we
+    #   don't want to set default index (if there *is* OOV it means there
+    #   is a bug and we don't want to fail silently)
+    # targets_vocab.set_default_index()
+    return targets_vocab
 
 
 @dataclass
