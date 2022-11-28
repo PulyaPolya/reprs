@@ -25,11 +25,18 @@ from reprs.vocab import Vocab
 from reprs.utils import get_idx_to_item_leq, get_index_to_item_leq, get_item_leq
 
 
+DEFAULT_MIN_WEIGHT = -3
+
+
 class ImageLikeFeatureVocab(Vocab):
     def __init__(self, tokens):
         super().__init__(
             tokens=tokens, specials=("<NA>", "<UNK>"), default_index=1
         )
+
+
+# TODO return scipy.sparse matrices rather than dense np arrays (or at least
+#   offer a flag to this extent)
 
 
 class ImageLikeRepr:
@@ -80,10 +87,12 @@ class ImageLikeRepr:
             onsets = None
         min_pitch = self.settings.min_pitch
         weights = self.settings.onsets == "weights"
-        min_weight = self.settings.min_weight_to_encode
+        min_weight = self.settings.min_weight
         weight_offset = 2 - min_weight
         for _, note in df.iterrows():
-            # TODO what about unisons? are the weights added together?
+            # Note that there can be unisons, but in that case, each note
+            #   among the unisons should have the same weight and or onset
+            #   value.
             if self.settings.onsets:
                 onsets[note.onset].append(
                     (
@@ -224,7 +233,9 @@ class ImageLikeSettings(ReprSettings):
     min_dur: t.Optional[float] = None
     # onsets can be "yes" or "weights"
     onsets: t.Optional[str] = None
-    min_weight_to_encode: int = 0
+    min_weight: int = (
+        DEFAULT_MIN_WEIGHT  # should be set to same value as metricker.Meter
+    )
     # if fixed_segment_len is True, then when calling ImageLikeRepr.segment,
     #   each segment will be *exactly* window_len
     fixed_segment_len: bool = True
