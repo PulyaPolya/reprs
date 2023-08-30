@@ -28,11 +28,11 @@ from reprs.utils import get_idx_to_item_leq, get_index_to_item_leq, get_item_leq
 DEFAULT_MIN_WEIGHT = -3
 
 
-class ImageLikeFeatureVocab(Vocab):
-    def __init__(self, tokens):
-        super().__init__(
-            tokens=tokens, specials=("<NA>", "<UNK>"), default_index=1
-        )
+# class ImageLikeFeatureVocab(Vocab):
+#     def __init__(self, tokens):
+#         super().__init__(
+#             tokens=tokens,  # specials=("<NA>", "<UNK>"), default_index=1
+#         )
 
 
 # TODO return scipy.sparse matrices rather than dense np arrays (or at least
@@ -46,14 +46,24 @@ class ImageLikeRepr:
         settings: ImageLikeSettings,
         feature_names: t.Iterable[str] = (),
         feature_tokens: t.Optional[t.Dict[str, t.Sequence[str]]] = None,
+        feature_specials: t.Optional[t.Dict[str, t.Sequence[str]]] = None,
+        feature_default_index: t.Optional[t.Dict[str, int]] = None,
     ):
         # TODO choose quantize level dynamically?
         self.settings = settings
         self.feature_names = feature_names
         if feature_names:
+            if feature_specials is None:
+                feature_specials = {}
+            if feature_default_index is None:
+                feature_default_index = {}
             assert feature_tokens is not None
             self.feature_vocabs = {
-                name: ImageLikeFeatureVocab(tokens)
+                name: Vocab(
+                    tokens,
+                    specials=feature_specials.get(name, None),
+                    default_index=feature_default_index.get(name, None),
+                )
                 for name, tokens in feature_tokens.items()
             }
         else:

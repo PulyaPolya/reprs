@@ -6,11 +6,7 @@ import matplotlib.pyplot as plt
 from music_df import quantize_df
 from metricker import apply_weights
 
-from reprs.image_like import (
-    ImageLikeRepr,
-    ImageLikeSettings,
-    ImageLikeFeatureVocab,
-)
+from reprs.image_like import ImageLikeRepr, ImageLikeSettings
 
 
 from tests.helpers_for_tests import read_humdrum, get_input_kern_paths
@@ -37,6 +33,8 @@ def test_image_like(n_kern_files, plot):
                 settings,
                 feature_names=["spelling"],
                 feature_tokens={"spelling": NOTE_NAMES},
+                feature_specials={"spelling": ("<NA>", "<UNK>")},
+                feature_default_index={"spelling": 1},
             )
             sub_df = df[df.type == "note"]
             if min_dur is not None:
