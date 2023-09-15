@@ -12,7 +12,7 @@ class CSVChunkWriter:
         self._modulo = n_lines_per_chunk - 1
         self._outf = None
 
-    def writerow(self, row: t.List[str]):
+    def writerow(self, row: t.Iterable[str]):
         if self._writer is None or (not self._line_count % self._modulo):
             if self._outf is not None:
                 self._outf.close()

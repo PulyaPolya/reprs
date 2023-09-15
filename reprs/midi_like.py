@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 try:
     from functools import cached_property
 except ImportError:
@@ -12,33 +14,22 @@ import pickle
 import re
 import typing as t
 import warnings
-
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from functools import partial
 from numbers import Number
 
 import pandas as pd
-
+from music_df import get_eligible_onsets, get_eligible_releases, sort_df
 from time_shifter import TimeShifter
 
-from music_df import (
-    sort_df,
-    get_eligible_onsets,
-    get_eligible_releases,
-)
-
-from reprs.constants import (
-    END_TOKEN,
-    PAD_TOKEN,
-    START_TOKEN,
-    SPECIALS,
-    UNKNOWN_TOKEN,
-)
+from reprs.constants import END_TOKEN, PAD_TOKEN, SPECIALS, START_TOKEN, UNKNOWN_TOKEN
+from reprs.shared import MidiLikeReprSettingsBase
 from reprs.utils import get_idx_to_item_leq, get_index_to_item_leq, get_item_leq
-from reprs.shared import ReprSettings
 from reprs.vocab import Vocab
 from reprs.writers import CSVChunkWriter
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -61,9 +52,7 @@ class Event:
         )
 
 
-NOTE_PATTERN = re.compile(
-    r"^note_(?P<on_or_off>on|off)<(?P<pitch>\d+(?:\.\d+)?)>$"
-)
+NOTE_PATTERN = re.compile(r"^note_(?P<on_or_off>on|off)<(?P<pitch>\d+(?:\.\d+)?)>$")
 
 NULL_FEATURE = "na"
 
@@ -248,9 +237,9 @@ class MIDILikeRepr:
                     self.note_on_idx_to_repr_idx[note_event.idx] = len(self)
                     for name in feature_names:
                         # TODO rename?
-                        self.note_off_i_to_feature_i[name][
-                            note_event.idx
-                        ] = len(self.features[name])
+                        self.note_off_i_to_feature_i[name][note_event.idx] = len(
+                            self.features[name]
+                        )
                         if for_token_classification:
                             self.features[name].append(NULL_FEATURE)
                     self.events.append("bar")
@@ -304,10 +293,7 @@ class MIDILikeRepr:
                 #   (after any note_offs). The difficulty here is that then we
                 #   have to figure out some way of "re-inserting" the weight
                 #   event when slicing segments.
-                if (
-                    note_event.weight is not None
-                    and note_event.weight >= min_weight
-                ):
+                if note_event.weight is not None and note_event.weight >= min_weight:
                     self.events.append(f"weight<{note_event.weight}>")
                     if for_token_classification:
                         for name in feature_names:
@@ -363,9 +349,7 @@ class MIDILikeRepr:
         start_orphan_indxs=(),
         end_orphan_indxs=(),
     ):
-        indices = {
-            i for i in self.df_indices[repr_start_i:repr_end_i] if i is not None
-        }
+        indices = {i for i in self.df_indices[repr_start_i:repr_end_i] if i is not None}
         indices = indices.union(start_orphan_indxs)
         indices = indices.union(end_orphan_indxs)
         return self.df.loc[sorted(indices), name]
@@ -378,18 +362,13 @@ class MIDILikeRepr:
             assert min_window_len <= window_len
         return min_window_len
 
-    def _get_start_orphans(
-        self, start_note_on_i
-    ) -> t.Tuple[t.List[int], t.List[str]]:
+    def _get_start_orphans(self, start_note_on_i) -> t.Tuple[t.List[int], t.List[str]]:
         start_orphan_indxs = self.sounding_notes_at_time[
             self.df.onset.loc[start_note_on_i]
         ]
         start_orphans = (
             (
-                [
-                    f"note_on<{int(self.df.loc[i, 'pitch'])}>"
-                    for i in start_orphan_indxs
-                ]
+                [f"note_on<{int(self.df.loc[i, 'pitch'])}>" for i in start_orphan_indxs]
                 + [self.ts.unknown_time_shift]
             )
             if start_orphan_indxs
@@ -425,9 +404,7 @@ class MIDILikeRepr:
             ]
             features = {}
             for name in self.features:
-                feature = [
-                    self.features[name][i] for i in start_orphan_repr_indices
-                ]
+                feature = [self.features[name][i] for i in start_orphan_repr_indices]
                 if start_orphan_repr_indices:
                     feature.append(NULL_FEATURE)
                 feature.extend(self.features[name][start_i:end_i])
@@ -449,9 +426,7 @@ class MIDILikeRepr:
             }
         return features
 
-    def _get_segment_indxs(
-        self, start_orphan_indxs, start_i, end_i, end_orphan_indxs
-    ):
+    def _get_segment_indxs(self, start_orphan_indxs, start_i, end_i, end_orphan_indxs):
         return SegmentIndices(
             tuple(self.note_on_idx_to_repr_idx[i] for i in start_orphan_indxs),
             start_i,
@@ -459,9 +434,7 @@ class MIDILikeRepr:
             tuple(self.note_off_idx_to_repr_idx[i] for i in end_orphan_indxs),
         )
 
-    def _advance_start_i(
-        self, start_i, hop, eligible_onsets
-    ) -> t.Tuple[int, int]:
+    def _advance_start_i(self, start_i, hop, eligible_onsets) -> t.Tuple[int, int]:
         next_start_i_target = start_i + hop
         next_start_i_target_note_on = get_idx_to_item_leq(
             self.repr_note_on_indices, next_start_i_target
@@ -482,9 +455,7 @@ class MIDILikeRepr:
             eligible_onsets_i += 1
         return start_note_on_i, start_i, eligible_onsets_i
 
-    def _advance_end_i(
-        self, start_i, window_len, n_start_orphans, eligible_releases
-    ):
+    def _advance_end_i(self, start_i, window_len, n_start_orphans, eligible_releases):
         exact_end_i = start_i + window_len - n_start_orphans
         end_i_decremented = False
         while exact_end_i > start_i:
@@ -493,13 +464,9 @@ class MIDILikeRepr:
             repr_i = get_item_leq(self.repr_note_off_indices, exact_end_i - 1)
             possible_note_off_j = self.repr_idx_to_note_off_idx[repr_i]
             possible_off_time = self.df.release.loc[possible_note_off_j]
-            end_note_off_i = get_index_to_item_leq(
-                eligible_releases, possible_off_time
-            )
+            end_note_off_i = get_index_to_item_leq(eligible_releases, possible_off_time)
             end_note_off_time = self.df.release.loc[end_note_off_i]
-            end_i = (
-                self.repr_idx_of_last_note_off_at_time[end_note_off_time] + 1
-            )
+            end_i = self.repr_idx_of_last_note_off_at_time[end_note_off_time] + 1
             if (
                 end_i == len(self.events) - 1
                 and (end_i - start_i < window_len)
@@ -530,10 +497,7 @@ class MIDILikeRepr:
         allow_short_initial_window: bool = True,
         allow_short_last_window: bool = True,
         return_repr_indices: bool = False,
-    ) -> t.Union[
-        t.Tuple[t.List[str], t.Dict[str, t.List[str]], Number],
-        t.Tuple[t.List[str], t.Dict[str, t.List[str]], Number, SegmentIndices],
-    ]:
+    ) -> t.Iterator[dict[str, t.Any]]:
         """
         Keyword args:
             allow_short_initial_window: If this is False, then if
@@ -541,12 +505,7 @@ class MIDILikeRepr:
                 If this is True, then in that case we return a single
                 list consisting of self.events.
         Returns:
-            a tuple of:
-                a list of strings: event tokens
-                a dictionary from strings to list of strings: keys are feature
-                    names, values are feature tokens
-                number: offset from beginning of score in quarter-notes
-                SegmentIndices: returned if return_repr_indices is True
+
         """
         min_window_len = self._get_min_window_len(min_window_len, window_len)
 
@@ -567,15 +526,11 @@ class MIDILikeRepr:
             } | {name: self.features[name][:] for name in self.features}
 
             if return_repr_indices:
-                out["repr_indices"] = SegmentIndices(
-                    (), 0, len(self.events), ()
-                )
+                out["repr_indices"] = SegmentIndices((), 0, len(self.events), ())
             yield out
             return
         while start_i < len(self.events) - min_window_len:
-            start_orphan_indxs, start_orphans = self._get_start_orphans(
-                start_note_on_i
-            )
+            start_orphan_indxs, start_orphans = self._get_start_orphans(start_note_on_i)
             end_i, end_orphan_indxs = self._advance_end_i(
                 start_i, window_len, len(start_orphans), eligible_releases
             )
@@ -610,9 +565,7 @@ class MIDILikeRepr:
                 start_i, hop, eligible_onsets
             )
         if allow_short_last_window and end_i < len(self.events):
-            start_orphan_indxs, start_orphans = self._get_start_orphans(
-                start_note_on_i
-            )
+            start_orphan_indxs, start_orphans = self._get_start_orphans(start_note_on_i)
             features = self._get_features(start_orphan_indxs, start_i, None, [])
             out = {
                 "input": start_orphans + self.events[start_i:],
@@ -686,9 +639,7 @@ def midilike_encode(
                 # for some examples
                 pitch=row.pitch,
                 features=features,
-                weight=int(row.weight)
-                if settings.include_metric_weights
-                else None,
+                weight=int(row.weight) if settings.include_metric_weights else None,
             )
         )
         note_events.append(
@@ -779,9 +730,15 @@ def midilike_decode(
 
     There must be at least one time_shift event in 'events'.
 
-    >>> events = ["note_on<60>", "time_shift<U>", "note_on<64>",
-    ...           "time_shift<2^1>", "note_off<60>", "time_shift<U>",
-    ...           "note_off<64>"]
+    >>> events = [
+    ...     "note_on<60>",
+    ...     "time_shift<U>",
+    ...     "note_on<64>",
+    ...     "time_shift<2^1>",
+    ...     "note_off<60>",
+    ...     "time_shift<U>",
+    ...     "note_off<64>",
+    ... ]
     >>> midilike_decode(events)[["pitch", "onset", "release"]]
        pitch  onset  release
     0   60.0   -1.0      2.0
@@ -798,9 +755,7 @@ def midilike_decode(
         if event.startswith("time_shift"):
             break
     else:
-        raise ValueError(
-            "There must be at least one `time_shift` event in `events`"
-        )
+        raise ValueError("There must be at least one `time_shift` event in `events`")
     now = -unknown_offset if (check_time_shift(event) < 0) else 0
 
     for event in events:
@@ -844,9 +799,7 @@ def midilike_decode(
 def inputs_vocab_items(
     settings: MidiLikeSettings,
 ) -> t.List[str]:
-    time_shifter = TimeShifter(
-        min_exp=settings.min_ts_exp, max_exp=settings.max_ts_exp
-    )
+    time_shifter = TimeShifter(min_exp=settings.min_ts_exp, max_exp=settings.max_ts_exp)
     time_shifts = list(time_shifter.get_vocabulary().keys())
     note_ons = [
         f"note_on<{pitch}>"
@@ -859,10 +812,7 @@ def inputs_vocab_items(
     out = time_shifts + note_ons + note_offs
     if settings.include_metric_weights:
         out.extend(
-            [
-                f"weight<{i}>"
-                for i in range(settings.min_weight_to_encode, 2 + 1)
-            ]
+            [f"weight<{i}>" for i in range(settings.min_weight_to_encode, 2 + 1)]
         )
     if settings.include_barlines:
         out.append("bar")
@@ -891,13 +841,13 @@ def get_target_vocab(dataset_root_dir):
 
 
 @dataclass
-class MidiLikeSettings(ReprSettings):
+class MidiLikeSettings(MidiLikeReprSettingsBase):
     include_barlines: bool = False
     include_metric_weights: bool = False
     min_weight_to_encode: int = 0
     end_token: bool = False
     start_token: bool = False
-    for_token_classification: bool = False
+    for_token_classification: bool = True
 
     @property
     def file_writer(self):
@@ -906,3 +856,13 @@ class MidiLikeSettings(ReprSettings):
     @property
     def encode_f(self):
         return midilike_encode
+
+    @property
+    def inputs_vocab(self):
+        return inputs_vocab_items(self)
+
+    def validate_corpus(self, corpus_attrs: dict[str, t.Any]) -> bool:
+        if self.include_metric_weights and not corpus_attrs.get("has_weights", False):
+            LOGGER.info(f"Corpus lacking metric weights, validation failed")
+            return False
+        return True

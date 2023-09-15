@@ -6,24 +6,17 @@ except ImportError:
     # python <= 3.7
     from cached_property import cached_property  # type:ignore
 
-
-from dataclasses import dataclass
-from collections import defaultdict
 import typing as t
+from collections import defaultdict
+from dataclasses import dataclass
 
-import pandas as pd
 import numpy as np
+import pandas as pd
+from music_df import get_eligible_onsets, get_eligible_releases, quantize_df
 
-from music_df import (
-    quantize_df,
-    get_eligible_onsets,
-    get_eligible_releases,
-)
-
-from reprs.shared import ReprSettings
-from reprs.vocab import Vocab
+from reprs.shared import MidiLikeReprSettingsBase
 from reprs.utils import get_idx_to_item_leq, get_index_to_item_leq, get_item_leq
-
+from reprs.vocab import Vocab
 
 DEFAULT_MIN_WEIGHT = -3
 
@@ -115,17 +108,13 @@ class ImageLikeRepr:
             for i in range(note.onset, note.release):
                 out[i].append(int(note.pitch) - min_pitch)
                 for feature_name, vocab in self.feature_vocabs.items():
-                    feature_slices[feature_name][i].append(
-                        vocab[note[feature_name]]
-                    )
+                    feature_slices[feature_name][i].append(vocab[note[feature_name]])
         return out, onsets, feature_slices
 
     def _to_multi_hot(
         self,
         slices: t.List[t.List[t.Union[int, t.Tuple[int, int]]]],
-        feature_slices: t.Optional[
-            t.DefaultDict[str, t.List[t.List[int]]]
-        ] = None,
+        feature_slices: t.Optional[t.DefaultDict[str, t.List[t.List[int]]]] = None,
         tuples: bool = False,
     ) -> np.ndarray:
         out = np.zeros(
@@ -160,9 +149,7 @@ class ImageLikeRepr:
 
     @cached_property
     def eligible_onsets(self):
-        return get_eligible_onsets(
-            self.df, keep_onsets_together=True, notes_only=True
-        )
+        return get_eligible_onsets(self.df, keep_onsets_together=True, notes_only=True)
 
     @cached_property
     def eligible_releases(self):
@@ -203,10 +190,7 @@ class ImageLikeRepr:
             "piano_roll": self.multi_hot[start_i:end_i],
             "tick": start_i,
             "segment_onset": start_i / self.settings.tpq,
-        } | {
-            name: mask[start_i:end_i]
-            for name, mask in self.feature_masks.items()
-        }
+        } | {name: mask[start_i:end_i] for name, mask in self.feature_masks.items()}
         if self.settings.onsets:
             out["onsets"] = self.onsets[start_i:end_i]
         return out
@@ -238,7 +222,7 @@ class ImageLikeRepr:
 
 
 @dataclass
-class ImageLikeSettings(ReprSettings):
+class ImageLikeSettings(MidiLikeReprSettingsBase):
     tpq: int = 8
     min_dur: t.Optional[float] = None
     # onsets can be "yes" or "weights"
