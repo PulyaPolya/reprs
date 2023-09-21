@@ -162,6 +162,8 @@ class OctupleEncoding:
         tokens: list,
         features: dict[str, list[Any]],
         onsets: list[float | Fraction],
+        df_indices: list[int],
+        source_id: str = "unknown",
     ):
         assert len(tokens) == len(onsets)
         for feature in features.values():
@@ -170,6 +172,8 @@ class OctupleEncoding:
         self._tokens = tokens
         self._features = features
         self._onsets = onsets
+        self._df_indices = df_indices
+        self._source_id = source_id
 
     def segment(self, window_len: int, hop: int | None) -> Iterator[dict[str, Any]]:
         if hop is None:
@@ -207,13 +211,17 @@ class OctupleEncoding:
             e_segment = []
             feature_segments = defaultdict(list)
             segment_onset = self._onsets[L]
+            segment_indices = []
             for index in range(L, R + 1):
-                i = encoding[index]
-                if i[0] is None or i[0] + bar_index_offset < BAR_MAX:
-                    e_segment.append(i)
+                octuple = encoding[index]
+                if (
+                    octuple[OCT_BAR_I] is None
+                    or octuple[OCT_BAR_I] + bar_index_offset < BAR_MAX
+                ):
+                    segment_indices.append(self._df_indices[index])
+                    e_segment.append(octuple)
                     for name, feature in self._features.items():
                         feature_segments[name].append(feature[index])
-                    # feature_segments.append(self._features[index])
                 else:
                     break
 
@@ -248,6 +256,8 @@ class OctupleEncoding:
             yield {
                 "input": output_words,
                 "segment_onset": segment_onset,
+                "df_indices": segment_indices,
+                "source_id": self._source_id,
             } | output_features
 
 
@@ -267,9 +277,17 @@ def oct_encode(
     for kwarg in kwargs:
         LOGGER.warning(f"unused kwarg to midilike_encode '{kwarg}'")
 
+    source_id = music_df.attrs.get("source_id", "unknown")
     if not len(music_df):
         # Score is empty
-        return OctupleEncoding([], {}, [])
+        return OctupleEncoding([], {}, [], [], source_id=source_id)
+
+    # Not sure copying is necessary since we're assigning anyway below
+    music_df = music_df.copy()
+
+    # We create a copy of the original indices because we may add or change the order
+    #   of rows below
+    music_df["src_indices"] = music_df.index
 
     if sort:
         music_df = sort_df(music_df, inplace=False)
@@ -279,9 +297,6 @@ def oct_encode(
     # I'm not sure what the motivation for truncating scores is, given that we
     #   redistribute the bar numbers to the allowed range anyways.
     music_df = music_df[music_df.onset < pos_to_time(TRUNC_POS)]
-
-    # Not sure copying is necessary since we're assigning anyway below
-    music_df = music_df.copy()
 
     music_df["notes_start_pos"] = music_df.onset.apply(time_to_pos)
 
@@ -322,7 +337,7 @@ def oct_encode(
     music_df["pos_token"] = music_df.bar_relative_onset.apply(time_to_pos)
 
     if ((music_df["pos_token"] >= 128) & (music_df["type"] == "note")).any():
-        breakpoint()
+        raise ValueError
 
     # NB we use raw midi instrument numbers as instrument tokens
     # However, they also do something like this: MAX_INST + 1 if inst.is_drum else inst.program
@@ -348,10 +363,11 @@ def oct_encode(
     tokens: list[OctupleToken] = []
 
     df_dict = split_musicdf(music_df)
+    df_indices = []
 
     for inst_tuple, sub_df in df_dict.items():
         is_drum = False  # TODO: (Malcolm 2023-08-22)
-        for _, note in sub_df[sub_df.type == "note"].iterrows():
+        for df_i, note in sub_df[sub_df.type == "note"].iterrows():
             octuple = OctupleToken(
                 bar=int(note.bar_number),
                 position=note.pos_token,
@@ -363,21 +379,25 @@ def oct_encode(
                 tempo=note.tempo_token,
             )
             tokens.append(octuple)
+            df_indices.append(music_df.loc[df_i, "src_indices"])  # type:ignore
 
             for name in feature_names:
                 features[name].append(note[name])
             onsets.append(note.onset)
             # features.append({name: note[name] for name in feature_names})
     if len(tokens) == 0:
-        return OctupleEncoding([], {}, [])
+        return OctupleEncoding([], {}, [], [], source_id=source_id)
 
-    indices = sorted(list(range(len(tokens))), key=tokens.__getitem__)
-    tokens = [tokens[i] for i in indices]
-    # features = [features[i] for i in indices]
+    sorted_indices = sorted(list(range(len(tokens))), key=tokens.__getitem__)
+    tokens = [tokens[i] for i in sorted_indices]
+
+    df_indices = [df_indices[i] for i in sorted_indices]
     features = {
-        name: [feature[i] for i in indices] for name, feature in features.items()
+        name: [feature[i] for i in sorted_indices] for name, feature in features.items()
     }
     # encoding.sort()
-    encoding = OctupleEncoding(tokens, features, onsets)
+    encoding = OctupleEncoding(
+        tokens, features, onsets, df_indices, source_id=source_id
+    )
 
     return encoding
