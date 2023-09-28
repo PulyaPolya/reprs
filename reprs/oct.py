@@ -181,9 +181,11 @@ class OctupleEncoding:
         encoding = self._tokens
         sample_step = hop
         SAMPLE_LEN_MAX = window_len
-        for p in range(
-            0 - random.randint(0, SAMPLE_LEN_MAX - 1), len(encoding), sample_step
-        ):
+        if len(encoding) > window_len:
+            start_i = 0 - random.randint(0, SAMPLE_LEN_MAX - 1)
+        else:
+            start_i = 0
+        for p in range(start_i, len(encoding), sample_step):
             L = max(p, 0)
             R = min(p + SAMPLE_LEN_MAX, len(encoding)) - 1
 
