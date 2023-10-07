@@ -42,7 +42,10 @@ class OctupleEncodingSettings(ReprSettingsBase):
         # compatibility with chord_tones_seqs
         return "..."
 
-    def validate_corpus(self, corpus_attrs: dict[str, Any]) -> bool:
+    def validate_corpus(self, corpus_attrs: dict[str, Any], corpus_name: str) -> bool:
+        if corpus_attrs is None:
+            LOGGER.warning(f"corpus_attrs for {corpus_name} is None")
+            return False
         if not corpus_attrs.get("has_time_signatures", False):
             LOGGER.info(f"Corpus lacking time signature, validation failed")
             return False
@@ -313,7 +316,7 @@ def oct_encode(
         music_df.loc[i, "ts_denominator"] = denom  # type:ignore
         music_df.loc[
             i, "other"
-        ] = '{"numerator": numer, "denominator": denom}'  # type:ignore
+        ] = f'{{"numerator": {numer}, "denominator": {denom}}}'  # type:ignore
 
     music_df["time_sig_token"] = music_df.apply(
         lambda row: time_sig_to_token(

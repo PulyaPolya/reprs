@@ -28,7 +28,7 @@ class ReprSettingsBase:
         raise NotImplementedError
 
     @abstractmethod
-    def validate_corpus(self, corpus_attrs: dict[str, t.Any]) -> bool:
+    def validate_corpus(self, corpus_attrs: dict[str, t.Any], corpus_name: str) -> bool:
         raise NotImplementedError
 
 

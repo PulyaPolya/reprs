@@ -861,7 +861,7 @@ class MidiLikeSettings(MidiLikeReprSettingsBase):
     def inputs_vocab(self):
         return inputs_vocab_items(self)
 
-    def validate_corpus(self, corpus_attrs: dict[str, t.Any]) -> bool:
+    def validate_corpus(self, corpus_attrs: dict[str, t.Any], corpus_name: str) -> bool:
         if self.include_metric_weights and not corpus_attrs.get("has_weights", False):
             LOGGER.info(f"Corpus lacking metric weights, validation failed")
             return False
