@@ -16,6 +16,7 @@ from music_df.add_feature import (
     add_default_midi_instrument,
     add_default_velocity,
     get_bar_relative_onset,
+    infer_barlines,
     make_bar_explicit,
     make_instruments_explicit,
     make_tempos_explicit,
@@ -329,6 +330,10 @@ def oct_encode(
     music_df = make_tempos_explicit(music_df, default_tempo=120.0)
     music_df["tempo_token"] = music_df.tempo.apply(tempo_to_token)
 
+    # If there are no barlines, we infer them
+    if not (music_df.type == "bar").any():
+        music_df = infer_barlines(music_df)
+
     # Sometimes scores have bars that are longer than the notated time signature
     # We split those measures "naively" (according to the notated time signature).
     # This isn't ideal but it is required to avoid OOV positions.
@@ -375,13 +380,13 @@ def oct_encode(
         for df_i, note in sub_df[sub_df.type == "note"].iterrows():
             octuple = OctupleToken(
                 bar=int(note.bar_number),
-                position=note.pos_token,
+                position=int(note.pos_token),
                 instrument=int(note.midi_instrument),
                 pitch=int(note.pitch + MAX_PITCH + 1 if is_drum else note.pitch),
-                duration=note.dur_token,
-                velocity=note.velocity_token,
-                time_sig=note.time_sig_token,
-                tempo=note.tempo_token,
+                duration=int(note.dur_token),
+                velocity=int(note.velocity_token),
+                time_sig=int(note.time_sig_token),
+                tempo=int(note.tempo_token),
             )
             tokens.append(octuple)
             df_indices.append(music_df.loc[df_i, "src_indices"])  # type:ignore
