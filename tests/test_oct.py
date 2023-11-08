@@ -5,9 +5,11 @@ import mido
 import pandas as pd
 import pytest
 from music_df.add_feature import infer_barlines, simplify_time_sigs
+from music_df.quantize_df import quantize_df
 from music_df.read_midi import read_midi
+from music_df.sort_df import sort_df
 
-from reprs.oct import oct_encode
+from reprs.oct import POS_RESOLUTION, oct_decode, oct_encode
 from tests.helpers_for_tests import (
     get_input_kern_paths,
     get_input_midi_paths,
@@ -51,6 +53,19 @@ def test_oct_encode(n_kern_files):
         assert isinstance(df, pd.DataFrame)
         encoding = oct_encode(df)
         tokens = encoding._tokens
+        decoded = oct_decode(tokens)
+
+        orig_notes = sort_df(
+            quantize_df(
+                df[df.type == "note"].reset_index(drop=True), tpq=POS_RESOLUTION
+            )
+        )
+        decode_notes = decoded[decoded.type == "note"].reset_index(drop=True)
+        assert (orig_notes.pitch == decode_notes.pitch).all()
+        assert (orig_notes.onset == decode_notes.onset).all()
+
+        # TODO: (Malcolm 2023-11-06) releases don't always match, by a small amount.
+        # assert (orig_notes.release == decode_notes.release).all()
 
         # Get reference implementation
         # with open(path, "rb") as f:

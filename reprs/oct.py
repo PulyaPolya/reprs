@@ -5,7 +5,7 @@ import random
 from collections import defaultdict, namedtuple
 from dataclasses import dataclass
 from fractions import Fraction
-from typing import Any, Iterator, Sequence
+from typing import Any, Iterable, Iterator, Sequence
 
 import numpy as np
 
@@ -70,6 +70,14 @@ OctupleToken = namedtuple(
 TimeSigTup = tuple[int, int]
 
 OCT_BAR_I = 0
+OCT_POS_I = 1
+OCT_INSTRUMENT_I = 2
+OCT_PITCH_I = 3
+OCT_DUR_I = 4
+OCT_VELOCITY_I = 5
+OCT_TS_I = 6
+OCT_TEMPO_I = 7
+
 TOKENS_PER_NOTE = 8
 
 DATA_PATH = os.getenv("MUSICBERT_DATAPATH", "/Users/malcolm/tmp/output.zip")
@@ -126,12 +134,24 @@ def time_sig_to_token(x):
     return TS_DICT[x]
 
 
+def token_to_time_sig(x) -> TimeSigTup:
+    return TS_LIST[x]
+
+
 def duration_to_token(x):
     return DUR_ENC[x] if x < len(DUR_ENC) else DUR_ENC[-1]
 
 
+def token_to_duration(x):
+    return DUR_DEC[x] if x < len(DUR_DEC) else DUR_DEC[-1]
+
+
 def velocity_to_token(x):
     return x // VELOCITY_QUANT
+
+
+def token_to_velocity(x):
+    return (x * VELOCITY_QUANT) + (VELOCITY_QUANT // 2)
 
 
 def tempo_to_token(x):
@@ -140,6 +160,10 @@ def tempo_to_token(x):
     x = x / MIN_TEMPO
     e = round(math.log2(x) * TEMPO_QUANT)
     return e
+
+
+def token_to_tempo(x):
+    return 2 ** (x / TEMPO_QUANT) * MIN_TEMPO
 
 
 def time_signature_reduce(numerator, denominator):
@@ -411,3 +435,122 @@ def oct_encode(
     )
 
     return encoding
+
+
+def oct_decode(
+    encoding: Iterable[OctupleToken],
+    default_time_sig=(4, 4),
+    default_tempo=120.0,
+    replace_zero_duration=1 / 32,
+) -> pd.DataFrame:
+    # (Malcolm 2023-11-06) Instruments are not yet implemented
+
+    bar_to_ts_indices = [
+        list() for _ in range(max(map(lambda x: x[0], encoding)) + 1)  # type:ignore
+    ]
+
+    for token in encoding:
+        # Start each bar with the time sig token
+        bar_to_ts_indices[token[OCT_BAR_I]].append(token[OCT_TS_I])
+
+    # Every token has a time signature, so there will be many time signatures in each
+    # measure. We take the most common time signature in each measure to stand for the
+    # entire measure. (Hopefully there are no mid-measure time signature changes!)
+    bar_to_ts = [
+        max(set(bar), key=bar.count) if len(bar) > 0 else None
+        for bar in bar_to_ts_indices
+    ]
+
+    for i in range(len(bar_to_ts)):
+        if bar_to_ts[i] is None:
+            bar_to_ts[i] = (
+                time_sig_to_token(time_signature_reduce(*default_time_sig))
+                if i == 0
+                else bar_to_ts[i - 1]
+            )
+
+    bar_to_pos: list[None | int] = [None] * len(bar_to_ts)
+    cur_pos = 0
+
+    for i in range(len(bar_to_pos)):
+        bar_to_pos[i] = cur_pos
+        ts = token_to_time_sig(bar_to_ts[i])
+        measure_length = ts[0] * BEAT_NOTE_FACTOR * POS_RESOLUTION // ts[1]
+        cur_pos += measure_length
+
+    pos_to_tempo = [
+        list()
+        for _ in range(
+            cur_pos + max(map(lambda x: x[OCT_POS_I], encoding))
+        )  # type:ignore
+    ]
+
+    for i in encoding:
+        pos_to_tempo[bar_to_pos[i[OCT_BAR_I]] + i[OCT_POS_I]].append(i[OCT_TEMPO_I])
+    pos_to_tempo = [
+        round(sum(i) / len(i)) if len(i) > 0 else None for i in pos_to_tempo
+    ]
+    for i in range(len(pos_to_tempo)):
+        if pos_to_tempo[i] is None:
+            pos_to_tempo[i] = (
+                tempo_to_token(default_tempo) if i == 0 else pos_to_tempo[i - 1]
+            )
+
+    note_dicts = []
+
+    def get_quarter_note_time(bar, pos):
+        return (bar_to_pos[bar] + pos) / POS_RESOLUTION
+
+    for token in encoding:
+        start = get_quarter_note_time(token[OCT_BAR_I], token[OCT_POS_I])
+        program = token[OCT_INSTRUMENT_I]
+        pitch = token[OCT_PITCH_I] - 128 if program == 128 else token[OCT_PITCH_I]
+        duration = get_quarter_note_time(0, token_to_duration(token[OCT_DUR_I]))
+        if duration == 0:
+            duration = replace_zero_duration
+        end = start + duration  # type:ignore
+        velocity = token_to_velocity(token[OCT_VELOCITY_I])
+        note_dicts.append(
+            {
+                "type": "note",
+                "onset": start,
+                "release": end,
+                "pitch": pitch,
+                "velocity": velocity,
+            }
+        )
+
+    ts_dicts = []
+    cur_ts = None
+    for i in range(len(bar_to_ts)):
+        new_ts = bar_to_ts[i]
+        if new_ts != cur_ts:
+            numerator, denominator = token_to_time_sig(new_ts)
+            ts_dicts.append(
+                {
+                    "type": "time_signature",
+                    "onset": get_quarter_note_time(i, 0),
+                    "other": {"numerator": numerator, "denominator": denominator},
+                }
+            )
+            cur_ts = new_ts
+
+    tempo_dicts = []
+    cur_tp = None
+    for i in range(len(pos_to_tempo)):
+        new_tp = pos_to_tempo[i]
+        if new_tp != cur_tp:
+            tempo = token_to_tempo(new_tp)
+            tempo_dicts.append(
+                {
+                    "type": "tempo",
+                    "other": {"tempo": tempo},
+                    "onset": get_quarter_note_time(0, i),
+                }
+            )
+            cur_tp = new_tp
+
+    dfs = [pd.DataFrame(d) for d in (note_dicts, ts_dicts, tempo_dicts)]
+    df = pd.concat(dfs, axis=0)
+    df = sort_df(df)
+    return df
