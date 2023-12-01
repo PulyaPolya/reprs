@@ -203,16 +203,22 @@ class OctupleEncoding:
         self._df_indices = df_indices
         self._source_id = source_id
 
-    def segment(self, window_len: int, hop: int | None) -> Iterator[dict[str, Any]]:
+    def segment(
+        self, window_len: int, hop: int | None, start_i: int | None = None
+    ) -> Iterator[dict[str, Any]]:
         if hop is None:
             hop = window_len
         encoding = self._tokens
         sample_step = hop
         SAMPLE_LEN_MAX = window_len
-        if len(encoding) > window_len:
-            start_i = 0 - random.randint(0, SAMPLE_LEN_MAX - 1)
+        if start_i is None:
+            if len(encoding) > window_len:
+                start_i = 0 - random.randint(0, SAMPLE_LEN_MAX - 1)
+            else:
+                start_i = 0
         else:
-            start_i = 0
+            assert start_i > 0 - SAMPLE_LEN_MAX
+
         for p in range(start_i, len(encoding), sample_step):
             L = max(p, 0)
             R = min(p + SAMPLE_LEN_MAX, len(encoding)) - 1
