@@ -217,6 +217,7 @@ class OctupleEncoding:
             else:
                 start_i = 0
         else:
+            # (Malcolm 2023-12-01) This allows to make the slicing deterministic
             assert start_i > 0 - SAMPLE_LEN_MAX
 
         for p in range(start_i, len(encoding), sample_step):
