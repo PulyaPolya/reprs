@@ -24,7 +24,7 @@ from music_df.add_feature import (
     split_long_bars,
 )
 
-from reprs.shared import ReprSettingsBase
+from reprs.shared import ReprEncodeError, ReprSettingsBase
 
 LOGGER = logging.getLogger(__name__)
 
@@ -45,7 +45,9 @@ class OctupleEncodingSettings(ReprSettingsBase):
 
     def validate_corpus(self, corpus_attrs: dict[str, Any], corpus_name: str) -> bool:
         if corpus_attrs is None:
-            LOGGER.warning(f"corpus_attrs for {corpus_name} is None")
+            LOGGER.warning(
+                f"Validation failed because corpus_attrs for {corpus_name} is None"
+            )
             return False
         if not corpus_attrs.get("has_time_signatures", False):
             LOGGER.info(f"Corpus lacking time signature, validation failed")
@@ -378,7 +380,7 @@ def oct_encode(
     music_df["pos_token"] = music_df.bar_relative_onset.apply(time_to_pos)
 
     if ((music_df["pos_token"] >= 128) & (music_df["type"] == "note")).any():
-        raise ValueError
+        raise ReprEncodeError
 
     # NB we use raw midi instrument numbers as instrument tokens
     # However, they also do something like this: MAX_INST + 1 if inst.is_drum else inst.program

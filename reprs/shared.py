@@ -13,6 +13,10 @@ from time_shifter import TimeShifter
 TIME_SHIFTERS = {}
 
 
+class ReprEncodeError(Exception):
+    pass
+
+
 @dataclass
 class ReprSettingsBase:
     pass
