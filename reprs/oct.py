@@ -21,6 +21,7 @@ from music_df.add_feature import (
     make_instruments_explicit,
     make_tempos_explicit,
     make_time_signatures_explicit,
+    simplify_time_sigs,
     split_long_bars,
 )
 
@@ -129,6 +130,13 @@ for i in range(DURATION_MAX):
         DUR_DEC.append(len(DUR_ENC))
         for k in range(2**i):
             DUR_ENC.append(len(DUR_DEC) - 1)
+
+
+def preprocess_df_for_oct_encoding(df: pd.DataFrame) -> pd.DataFrame:
+    """Simplifies time sigs and infers barlines."""
+    df = simplify_time_sigs(df)
+    df = infer_barlines(df)
+    return df
 
 
 def time_sig_to_token(x):

@@ -9,7 +9,12 @@ from music_df.quantize_df import quantize_df
 from music_df.read_midi import read_midi
 from music_df.sort_df import sort_df
 
-from reprs.oct import POS_RESOLUTION, oct_decode, oct_encode
+from reprs.oct import (
+    POS_RESOLUTION,
+    oct_decode,
+    oct_encode,
+    preprocess_df_for_oct_encoding,
+)
 from tests.helpers_for_tests import (
     get_input_kern_paths,
     get_input_midi_paths,
@@ -47,9 +52,7 @@ def test_oct_encode(n_kern_files):
         print(f"{i + 1}/{len(paths)}: {path}")
         df = read_midi(path)
         # ticks_per_beat = mido.MidiFile(path).ticks_per_beat
-        # TODO: (Malcolm 2023-08-22) put this processing into a function
-        df = simplify_time_sigs(df)
-        df = infer_barlines(df)
+        df = preprocess_df_for_oct_encoding(df)
         assert isinstance(df, pd.DataFrame)
         encoding = oct_encode(df)
         tokens = encoding._tokens
