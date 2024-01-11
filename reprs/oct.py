@@ -13,7 +13,6 @@ import numpy as np
 import pandas as pd
 from music_df import sort_df, split_musicdf
 from music_df.add_feature import (
-    add_default_midi_instrument,
     add_default_velocity,
     get_bar_relative_onset,
     infer_barlines,
@@ -33,6 +32,10 @@ LOGGER = logging.getLogger(__name__)
 @dataclass
 class OctupleEncodingSettings(ReprSettingsBase):
     ticks_per_beat: int = 1
+    # apply_random_bar_index_offset_when_segmenting: bool = True
+    # TODO: (Malcolm 2024-01-11) possibly rename, document
+    target_columns: Sequence[str] = ()
+    encoded_targets: Sequence[str] = ()
 
     @property
     def encode_f(self):
@@ -81,6 +84,12 @@ OCT_VELOCITY_I = 5
 OCT_TS_I = 6
 OCT_TEMPO_I = 7
 
+OCT_MAPPING = {
+    "bar_number": OCT_BAR_I,
+    "pos_token": OCT_POS_I,
+    "dur_token": OCT_DUR_I,
+}
+
 TOKENS_PER_NOTE = 8
 
 DATA_PATH = os.getenv("MUSICBERT_DATAPATH", "/Users/malcolm/tmp/output.zip")
@@ -94,8 +103,6 @@ SEED = 42
 
 POS_RESOLUTION = 16  # per beat (quarter note)
 
-# TODO: (Malcolm 2023-08-11) for the purposes of classical music I think we may want
-#   to increase BAR_MAX. Or else transpose later segments of the track to lie within it.
 BAR_MAX = 256
 VELOCITY_QUANT = 4
 TEMPO_QUANT = 12  # 2 ** (1 / 12)
@@ -202,6 +209,7 @@ class OctupleEncoding:
         onsets: list[float | Fraction],
         df_indices: list[int],
         source_id: str = "unknown",
+        apply_random_bar_index_offset_when_segmenting: bool = True,
     ):
         assert len(tokens) == len(onsets)
         for feature in features.values():
@@ -212,9 +220,15 @@ class OctupleEncoding:
         self._onsets = onsets
         self._df_indices = df_indices
         self._source_id = source_id
+        self._apply_random_bar_index_offset = (
+            apply_random_bar_index_offset_when_segmenting
+        )
 
     def segment(
-        self, window_len: int, hop: int | None, start_i: int | None = None
+        self,
+        window_len: int,
+        hop: int | None,
+        start_i: int | None = None,
     ) -> Iterator[dict[str, Any]]:
         if hop is None:
             hop = window_len
@@ -238,22 +252,25 @@ class OctupleEncoding:
                 encoding[i][OCT_BAR_I] for i in range(L, R + 1)
             ]
 
-            bar_index_min = 0
-            bar_index_max = 0
+            if self._apply_random_bar_index_offset:
+                bar_index_min = 0
+                bar_index_max = 0
 
-            if len(bar_index_list) > 0:
-                bar_index_min = bar_index_list[0]
-                bar_index_max = bar_index_list[-1]
+                if len(bar_index_list) > 0:
+                    bar_index_min = bar_index_list[0]
+                    bar_index_max = bar_index_list[-1]
 
-            # to make bar index distribute in [0, bar_max)
-            # Malcolm: i.e., to get a uniform distribution over bar numbers
-            offset_lower_bound = -bar_index_min
-            offset_upper_bound = BAR_MAX - 1 - bar_index_max
-            bar_index_offset = (
-                random.randint(offset_lower_bound, offset_upper_bound)
-                if offset_lower_bound <= offset_upper_bound
-                else offset_lower_bound
-            )
+                # to make bar index distribute in [0, bar_max)
+                # Malcolm: i.e., to get a uniform distribution over bar numbers
+                offset_lower_bound = -bar_index_min
+                offset_upper_bound = BAR_MAX - 1 - bar_index_max
+                bar_index_offset = (
+                    random.randint(offset_lower_bound, offset_upper_bound)
+                    if offset_lower_bound <= offset_upper_bound
+                    else offset_lower_bound
+                )
+            else:
+                bar_index_offset = 0
 
             e_segment = []
             feature_segments = defaultdict(list)
@@ -308,26 +325,14 @@ class OctupleEncoding:
             } | output_features
 
 
-def oct_encode(
-    music_df: pd.DataFrame,
-    settings: OctupleEncodingSettings = OctupleEncodingSettings(),
-    feature_names: Sequence[str] = (),
-    sort: bool = True,
-    **kwargs,
-) -> OctupleEncoding:
+def preprocess_df(
+    music_df: pd.DataFrame, settings: OctupleEncodingSettings, sort: bool
+) -> pd.DataFrame:
     def time_to_pos(t) -> int:
         return round(t * POS_RESOLUTION / settings.ticks_per_beat)
 
     def pos_to_time(p) -> float:
         return p * settings.ticks_per_beat / POS_RESOLUTION
-
-    for kwarg in kwargs:
-        LOGGER.warning(f"unused kwarg to midilike_encode '{kwarg}'")
-
-    source_id = music_df.attrs.get("source_id", "unknown")
-    if not len(music_df):
-        # Score is empty
-        return OctupleEncoding([], {}, [], [], source_id=source_id)
 
     # Not sure copying is necessary since we're assigning anyway below
     music_df = music_df.copy()
@@ -407,6 +412,57 @@ def oct_encode(
 
     music_df = add_default_velocity(music_df)
     music_df["velocity_token"] = music_df.velocity.apply(velocity_to_token).astype(int)
+    return music_df
+
+
+def oct_encode(
+    music_df: pd.DataFrame,
+    settings: OctupleEncodingSettings = OctupleEncodingSettings(),
+    feature_names: Sequence[str] = (),
+    sort: bool = True,
+    **kwargs,
+) -> OctupleEncoding:
+    for kwarg in kwargs:
+        LOGGER.warning(f"unused kwarg to midilike_encode '{kwarg}'")
+
+    source_id = music_df.attrs.get("source_id", "unknown")
+    if not len(music_df):
+        # Score is empty
+        return OctupleEncoding([], {}, [], [], source_id=source_id)
+
+    if settings.encoded_targets:
+        assert settings.target_columns
+        target_df = music_df.copy()
+        for col in settings.target_columns:
+            assert col.endswith("_target")
+            target_df[col[:-7]] = target_df[col]
+
+        target_df = target_df.drop(settings.target_columns, axis=1)
+        assert sort
+        target_df = preprocess_df(target_df, settings, True)
+        music_df = preprocess_df(music_df, settings, True)
+
+        # TODO: (Malcolm 2024-01-11) this assert is kind of expensive, we probably
+        #   only want to do it when testing
+        assert (
+            np.sort(target_df.src_indices.values)
+            == np.sort(music_df.src_indices.values)
+        ).all()
+
+        music_df = music_df.merge(
+            target_df, on="src_indices", suffixes=(None, "_target")
+        )
+        columns_to_keep = [
+            col
+            for col in music_df.columns
+            if (not col.endswith("_target")) or col[:-7] in settings.encoded_targets
+        ]
+        music_df = music_df[columns_to_keep]
+
+        if sort:
+            music_df = sort_df(music_df, inplace=False)
+    else:
+        music_df = preprocess_df(music_df, settings, sort)
 
     # features = []
     onsets = []
@@ -431,11 +487,22 @@ def oct_encode(
             )
             tokens.append(octuple)
             df_indices.append(music_df.loc[df_i, "src_indices"])  # type:ignore
-
             for name in feature_names:
-                features[name].append(note[name])
+                if name == "bar_delta":
+                    # (Malcolm 2024-01-11) It would be nice to do this in a less hacky
+                    #   way, for example by allowing defining callback functions for
+                    #   specific features.
+                    assert (
+                        "bar_number" in note.index and "bar_number_target" in note.index
+                    )
+                    bar_delta = int(note.bar_number_target - note.bar_number)
+                    features[name].append(str(bar_delta))
+                elif name.endswith("_target") and name[:-7] in OCT_MAPPING:
+                    features[name].append(f"<{OCT_MAPPING[name[:-7]]}-{note[name]}>")
+                else:
+                    features[name].append(note[name])
             onsets.append(note.onset)
-            # features.append({name: note[name] for name in feature_names})
+
     if len(tokens) == 0:
         return OctupleEncoding([], {}, [], [], source_id=source_id)
 
@@ -446,7 +513,7 @@ def oct_encode(
     features = {
         name: [feature[i] for i in sorted_indices] for name, feature in features.items()
     }
-    # encoding.sort()
+
     encoding = OctupleEncoding(
         tokens, features, onsets, df_indices, source_id=source_id
     )
