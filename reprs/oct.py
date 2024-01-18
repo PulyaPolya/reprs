@@ -95,9 +95,6 @@ TOKENS_PER_NOTE = 8
 DATA_PATH = os.getenv("MUSICBERT_DATAPATH", "/Users/malcolm/tmp/output.zip")
 PREFIX = os.getenv("MUSICBERT_OUTPUTPATH", "/Users/malcolm/tmp/octmidi/")
 
-# TODO: (Malcolm 2023-08-11) add multiprocess flag
-
-MULTIPROCESS = True
 MAX_FILES: int | None = None
 SEED = 42
 
@@ -141,6 +138,8 @@ for i in range(DURATION_MAX):
 
 def preprocess_df_for_oct_encoding(df: pd.DataFrame) -> pd.DataFrame:
     """Simplifies time sigs and infers barlines."""
+    # (Malcolm 2024-01-16) as far as I can tell this function is only used in testing
+    #   so it should probably be moved to the tests
     df = simplify_time_sigs(df)
     df = infer_barlines(df)
     return df
@@ -326,7 +325,10 @@ class OctupleEncoding:
 
 
 def preprocess_df(
-    music_df: pd.DataFrame, settings: OctupleEncodingSettings, sort: bool
+    music_df: pd.DataFrame,
+    settings: OctupleEncodingSettings,
+    sort: bool,
+    truncate: bool = False,
 ) -> pd.DataFrame:
     def time_to_pos(t) -> int:
         return round(t * POS_RESOLUTION / settings.ticks_per_beat)
@@ -344,11 +346,11 @@ def preprocess_df(
     if sort:
         music_df = sort_df(music_df, inplace=False)
 
-    # truncate df
-
-    # I'm not sure what the motivation for truncating scores is, given that we
-    #   redistribute the bar numbers to the allowed range anyways.
-    music_df = music_df[music_df.onset < pos_to_time(TRUNC_POS)]
+    # (Malcolm 2024-01-18) MusicBERT truncates scores, but I'm not sure why, given
+    #   that scores are segmented and bar numbers are redistributed to the
+    #   allowed range randomly.
+    if truncate:
+        music_df = music_df[music_df.onset < pos_to_time(TRUNC_POS)]
 
     music_df["notes_start_pos"] = music_df.onset.apply(time_to_pos)
 
@@ -444,10 +446,10 @@ def oct_encode(
 
         # TODO: (Malcolm 2024-01-11) this assert is kind of expensive, we probably
         #   only want to do it when testing
-        assert (
-            np.sort(target_df.src_indices.values)
-            == np.sort(music_df.src_indices.values)
-        ).all()
+        # assert (
+        #     np.sort(target_df.src_indices.values)
+        #     == np.sort(music_df.src_indices.values)
+        # ).all()
 
         music_df = music_df.merge(
             target_df, on="src_indices", suffixes=(None, "_target")
