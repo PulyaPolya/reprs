@@ -37,6 +37,8 @@ class OctupleEncodingSettings(ReprSettingsBase):
     target_columns: Sequence[str] = ()
     encoded_targets: Sequence[str] = ()
 
+    ignore_instrument: bool = False
+
     @property
     def encode_f(self):
         return oct_encode
@@ -399,7 +401,10 @@ def preprocess_df(
 
     # NB we use raw midi instrument numbers as instrument tokens
     # However, they also do something like this: MAX_INST + 1 if inst.is_drum else inst.program
-    music_df = make_instruments_explicit(music_df)
+    if settings.ignore_instrument:
+        music_df["midi_instrument"] = 0
+    else:
+        music_df = make_instruments_explicit(music_df)
 
     # Drop non-note events
 
