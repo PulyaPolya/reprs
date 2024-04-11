@@ -1,6 +1,4 @@
 numpy
 pandas
 tqdm
--e ../time_shifter
 -e /Users/malcolm/google_drive/python/malmus/music_df
--e /Users/malcolm/google_drive/python/malmus/metricker/

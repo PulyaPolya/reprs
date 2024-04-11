@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-try:
-    from functools import cached_property
-except ImportError:
-    # python <= 3.7
-    from cached_property import cached_property  # type:ignore
+from functools import cached_property
 
 import typing as t
 from collections import defaultdict
@@ -100,9 +96,11 @@ class ImageLikeRepr:
                 onsets[note.onset].append(
                     (
                         int(note.pitch) - min_pitch,
-                        weight_offset + note.weight
-                        if (weights and note.weight >= min_weight)
-                        else 1,
+                        (
+                            weight_offset + note.weight
+                            if (weights and note.weight >= min_weight)
+                            else 1
+                        ),
                     )
                 )
             for i in range(note.onset, note.release):

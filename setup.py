@@ -9,8 +9,11 @@ setup(
     long_description="TODO",
     long_description_content_type="text/markdown",
     # TODO add time_shifter to requirements
-    install_requires=["numpy", "pandas", "tqdm"],
-    extras_require={"midilike": "time-shifter"},
+    install_requires=["numpy", "pandas", "tqdm", "music_df"],
+    extras_require={
+        "midilike": ["time-shifter"],
+        "tests": ["metricker", "pytest"],
+    },
     url="TODO",
     project_urls={
         "Bug Tracker": "TODO",

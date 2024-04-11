@@ -38,23 +38,24 @@ class ReprSettingsBase:
         raise NotImplementedError
 
 
-if MIDILIKE_SUPPORTED:
+@dataclass
+class MidiLikeReprSettingsBase(ReprSettingsBase):
+    min_ts_exp: int = -4
+    max_ts_exp: int = 4
+    min_pitch: int = 21  # lowest pitch of piano
+    max_pitch: int = 108  # highest pitch of piano
+    salami_slice: bool = False
 
-    @dataclass
-    class MidiLikeReprSettingsBase(ReprSettingsBase):
-        min_ts_exp: int = -4
-        max_ts_exp: int = 4
-        min_pitch: int = 21  # lowest pitch of piano
-        max_pitch: int = 108  # highest pitch of piano
-        salami_slice: bool = False
+    data_file_ext: str = "csv"
 
-        data_file_ext: str = "csv"
-
-        @cached_property
-        def time_shifter(self):
+    @cached_property
+    def time_shifter(self):
+        if MIDILIKE_SUPPORTED:
             return TimeShifter(self.min_ts_exp, self.max_ts_exp)
+        else:
+            raise ValueError
 
-        @property
-        @abstractmethod
-        def file_writer(self):
-            pass
+    @property
+    @abstractmethod
+    def file_writer(self):
+        pass
