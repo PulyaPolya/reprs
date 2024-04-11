@@ -7,7 +7,6 @@ from functools import partial
 import pandas as pd
 from music_df import read_krn
 
-TOTABLE = os.getenv("TOTABLE")
 HUMDRUM_DATA_PATH = os.getenv("HUMDRUM_DATA")
 MIDIDATA_PATH = os.getenv("MIDIDATA_PATH")
 
