@@ -148,7 +148,8 @@ def preprocess_df_for_oct_encoding(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def time_sig_to_token(x):
-    assert x in TS_DICT, "unsupported time signature: " + str(x)
+    if x not in TS_DICT:
+        raise ReprEncodeError(f"unsupported time signature {str(x)}")
     return TS_DICT[x]
 
 
@@ -365,9 +366,9 @@ def preprocess_df(
         # There must be a better vectorized way of doing this
         music_df.loc[i, "ts_numerator"] = numer  # type:ignore
         music_df.loc[i, "ts_denominator"] = denom  # type:ignore
-        music_df.loc[
-            i, "other"
-        ] = f'{{"numerator": {numer}, "denominator": {denom}}}'  # type:ignore
+        music_df.loc[i, "other"] = (
+            f'{{"numerator": {numer}, "denominator": {denom}}}'
+        )  # type:ignore
 
     music_df["time_sig_token"] = music_df.apply(
         lambda row: time_sig_to_token(
