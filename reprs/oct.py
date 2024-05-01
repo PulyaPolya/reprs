@@ -22,6 +22,7 @@ from music_df.add_feature import (
     make_time_signatures_explicit,
     simplify_time_sigs,
     split_long_bars,
+    add_default_time_sig,
 )
 
 from reprs.shared import ReprEncodeError, ReprSettingsBase
@@ -358,6 +359,7 @@ def preprocess_df(
     music_df["notes_start_pos"] = music_df.onset.apply(time_to_pos)
 
     # Time signatures
+    music_df = add_default_time_sig(music_df)
     music_df = make_time_signatures_explicit(music_df)
 
     # reduce time signatures:
@@ -398,7 +400,7 @@ def preprocess_df(
     music_df["pos_token"] = music_df.bar_relative_onset.apply(time_to_pos)
 
     if ((music_df["pos_token"] >= 128) & (music_df["type"] == "note")).any():
-        raise ReprEncodeError
+        raise ReprEncodeError(f"note position is beyond max position 127")
 
     # NB we use raw midi instrument numbers as instrument tokens
     # However, they also do something like this: MAX_INST + 1 if inst.is_drum else inst.program
