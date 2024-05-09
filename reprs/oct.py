@@ -195,13 +195,14 @@ def time_signature_reduce(numerator, denominator):
     ):
         denominator //= 2
         numerator //= 2
+    numerator = int(numerator)
     # decomposition (when length of a bar exceed max_notes_per_bar)
     while numerator > MAX_NOTES_PER_BAR * denominator:
         for i in range(2, numerator + 1):
             if numerator % i == 0:
                 numerator //= i
                 break
-    return numerator, denominator
+    return int(numerator), int(denominator)
 
 
 class OctupleEncoding:
@@ -422,6 +423,7 @@ def preprocess_df(
 
     music_df = add_default_velocity(music_df)
     music_df["velocity_token"] = music_df.velocity.apply(velocity_to_token).astype(int)
+
     return music_df
 
 
