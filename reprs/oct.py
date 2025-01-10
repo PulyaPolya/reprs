@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 from music_df import sort_df, split_musicdf
 from music_df.add_feature import (
+    add_default_time_sig,
     add_default_velocity,
     get_bar_relative_onset,
     infer_barlines,
@@ -22,9 +23,9 @@ from music_df.add_feature import (
     make_time_signatures_explicit,
     simplify_time_sigs,
     split_long_bars,
-    add_default_time_sig,
 )
 
+from reprs.oct_vocab import INPUTS_VOCAB
 from reprs.shared import ReprEncodeError, ReprSettingsBase
 
 LOGGER = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ class OctupleEncodingSettings(ReprSettingsBase):
     def inputs_vocab(self):
         # I don't believe we will use this but it needs to be implemented for
         # compatibility with chord_tones_seqs
-        return "..."
+        return INPUTS_VOCAB
 
     def validate_corpus(self, corpus_attrs: dict[str, Any], corpus_name: str) -> bool:
         if corpus_attrs is None:
@@ -369,9 +370,7 @@ def preprocess_df(
         # There must be a better vectorized way of doing this
         music_df.loc[i, "ts_numerator"] = numer  # type:ignore
         music_df.loc[i, "ts_denominator"] = denom  # type:ignore
-        music_df.loc[i, "other"] = (
-            f'{{"numerator": {numer}, "denominator": {denom}}}'
-        )  # type:ignore
+        music_df.loc[i, "other"] = f'{{"numerator": {numer}, "denominator": {denom}}}'  # type:ignore
 
     music_df["time_sig_token"] = music_df.apply(
         lambda row: time_sig_to_token(
@@ -542,7 +541,8 @@ def oct_decode(
     # (Malcolm 2023-11-06) Instruments are not yet implemented
 
     bar_to_ts_indices = [
-        list() for _ in range(max(map(lambda x: x[0], encoding)) + 1)  # type:ignore
+        list()
+        for _ in range(max(map(lambda x: x[0], encoding)) + 1)  # type:ignore
     ]
 
     for token in encoding:
@@ -576,9 +576,7 @@ def oct_decode(
 
     pos_to_tempo = [
         list()
-        for _ in range(
-            cur_pos + max(map(lambda x: x[OCT_POS_I], encoding))
-        )  # type:ignore
+        for _ in range(cur_pos + max(map(lambda x: x[OCT_POS_I], encoding)))  # type:ignore
     ]
 
     for i in encoding:
