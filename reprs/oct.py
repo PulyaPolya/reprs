@@ -11,7 +11,7 @@ import numpy as np
 
 # Based on musicbert preprocessing code
 import pandas as pd
-from music_df import sort_df, split_musicdf
+from music_df.music_df import sort_df, split_musicdf
 from music_df.add_feature import (
     add_default_time_sig,
     add_default_velocity,
